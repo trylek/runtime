@@ -44,6 +44,11 @@ namespace ILCompiler
         public int? CustomPESectionAlignment { get; set; }
         public bool VerifyTypeAndFieldLayout { get; set; }
 
+        // Internal options for runtime perf analysis
+        public int CodeAlignment { get; set; }
+        public int PerfMethodHoopCount { get; set; }
+        public int CodeSectionPadding { get; set; }
+
         public string SingleMethodTypeName { get; set; }
         public string SingleMethodName { get; set; }
         public string[] SingleMethodGenericArg { get; set; }
@@ -59,9 +64,9 @@ namespace ILCompiler
 
             return new Command("Crossgen2Compilation")
             {
-                new Argument<FileInfo[]>() 
-                { 
-                    Name = "input-file-paths", 
+                new Argument<FileInfo[]>()
+                {
+                    Name = "input-file-paths",
                     Description = SR.InputFilesToCompile,
                     Arity = arbitraryArity,
                 },
@@ -74,14 +79,14 @@ namespace ILCompiler
                 },
                 new Option(new[] { "--reference", "-r" }, SR.ReferenceFiles)
                 {
-                    Argument = new Argument<string[]>() 
-                    { 
+                    Argument = new Argument<string[]>()
+                    {
                         Arity = arbitraryArity
-                    } 
+                    }
                 },
                 new Option(new[] { "--instruction-set" }, SR.InstructionSets)
                 {
-                    Argument = new Argument<string>() 
+                    Argument = new Argument<string>()
                 },
                 new Option(new[] { "--mibc", "-m" }, SR.MibcFiles)
                 {
@@ -98,92 +103,92 @@ namespace ILCompiler
                 {
                     Argument = new Argument<DirectoryInfo>()
                 },
-                new Option(new[] { "--optimize", "-O" }, SR.EnableOptimizationsOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--optimize", "-O" }, SR.EnableOptimizationsOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--optimize-space", "--Os" }, SR.OptimizeSpaceOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--optimize-space", "--Os" }, SR.OptimizeSpaceOption)
+                {
+                    Argument = new Argument<bool>()
                 },
                 new Option(new[] { "--optimize-time", "--Ot" }, SR.OptimizeSpeedOption),
                 new Option(new[] { "--inputbubble" }, SR.InputBubbleOption),
                 new Option(new[] { "--composite" }, SR.CompositeBuildMode),
                 new Option(new[] { "--compile-no-methods" }, SR.CompileNoMethodsOption),
-                new Option(new[] { "--tuning" }, SR.TuningImageOption) 
+                new Option(new[] { "--tuning" }, SR.TuningImageOption)
                 {
-                    Argument = new Argument<bool>() 
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--partial" }, SR.PartialImageOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--partial" }, SR.PartialImageOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--compilebubblegenerics" }, SR.BubbleGenericsOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--compilebubblegenerics" }, SR.BubbleGenericsOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--dgml-log-file-name", "--dmgllog" }, SR.SaveDependencyLogOption) 
-                { 
-                    Argument = new Argument<FileInfo>() 
+                new Option(new[] { "--dgml-log-file-name", "--dmgllog" }, SR.SaveDependencyLogOption)
+                {
+                    Argument = new Argument<FileInfo>()
                 },
-                new Option(new[] { "--generate-full-dmgl-log", "--fulllog" }, SR.SaveDetailedLogOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--generate-full-dmgl-log", "--fulllog" }, SR.SaveDetailedLogOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--verbose" }, SR.VerboseLoggingOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--verbose" }, SR.VerboseLoggingOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--systemmodule" }, SR.SystemModuleOverrideOption) 
-                { 
-                    Argument = new Argument<string>() 
+                new Option(new[] { "--systemmodule" }, SR.SystemModuleOverrideOption)
+                {
+                    Argument = new Argument<string>()
                 },
-                new Option(new[] { "--waitfordebugger" }, SR.WaitForDebuggerOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--waitfordebugger" }, SR.WaitForDebuggerOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--codegen-options", "--codegenopt" }, SR.CodeGenOptions) 
-                { 
+                new Option(new[] { "--codegen-options", "--codegenopt" }, SR.CodeGenOptions)
+                {
                     Argument = new Argument<string[]>()
                     {
                         Arity = arbitraryArity
                     }
                 },
-                new Option(new[] { "--resilient" }, SR.ResilientOption) 
-                { 
-                    Argument = new Argument<bool>() 
+                new Option(new[] { "--resilient" }, SR.ResilientOption)
+                {
+                    Argument = new Argument<bool>()
                 },
-                new Option(new[] { "--targetarch" }, SR.TargetArchOption) 
-                { 
-                    Argument = new Argument<string>() 
+                new Option(new[] { "--targetarch" }, SR.TargetArchOption)
+                {
+                    Argument = new Argument<string>()
                 },
-                new Option(new[] { "--targetos" }, SR.TargetOSOption) 
-                { 
-                    Argument = new Argument<string>() 
+                new Option(new[] { "--targetos" }, SR.TargetOSOption)
+                {
+                    Argument = new Argument<string>()
                 },
-                new Option(new[] { "--jitpath" }, SR.JitPathOption) 
-                { 
-                    Argument =  new Argument<FileInfo>() 
+                new Option(new[] { "--jitpath" }, SR.JitPathOption)
+                {
+                    Argument =  new Argument<FileInfo>()
                 },
-                new Option(new[] { "--singlemethodtypename" }, SR.SingleMethodTypeName) 
-                { 
-                    Argument = new Argument<string>() 
+                new Option(new[] { "--singlemethodtypename" }, SR.SingleMethodTypeName)
+                {
+                    Argument = new Argument<string>()
                 },
-                new Option(new[] { "--singlemethodname" }, SR.SingleMethodMethodName) 
-                { 
-                    Argument = new Argument<string>() 
+                new Option(new[] { "--singlemethodname" }, SR.SingleMethodMethodName)
+                {
+                    Argument = new Argument<string>()
                 },
-                new Option(new[] { "--singlemethodgenericarg" }, SR.SingleMethodGenericArgs) 
+                new Option(new[] { "--singlemethodgenericarg" }, SR.SingleMethodGenericArgs)
                 { 
                     // We don't need to override arity here as 255 is the maximum number of generic arguments
                     Argument = new Argument<string[]>()
                 },
                 new Option(new[] { "--parallelism" }, SR.ParalellismOption)
-                { 
+                {
                     Argument = new Argument<int>(() => Environment.ProcessorCount)
                 },
                 new Option(new[] { "--custom-pe-section-alignment" }, SR.CustomPESectionAlignmentOption)
-                { 
+                {
                     Argument = new Argument<int?>()
                 },
                 new Option(new[] { "--map" }, SR.MapFileOption)
@@ -201,7 +206,19 @@ namespace ILCompiler
                 new Option(new[] { "--verify-type-and-field-layout" }, SR.VerifyTypeAndFieldLayoutOption)
                 {
                     Argument = new Argument<bool>()
-                }
+                },
+                new Option(new[] { "--code-alignment" }, SR.CodeAlignment)
+                {
+                    Argument = new Argument<int>()
+                },
+                new Option(new[] { "--perf-method-hoop-count" }, SR.PerfMethodHoopCount)
+                {
+                    Argument = new Argument<int>()
+                },
+                new Option(new[] { "--code-section-padding" }, SR.CodeSectionPadding)
+                {
+                    Argument = new Argument<int>()
+                },
             };
         }
     }

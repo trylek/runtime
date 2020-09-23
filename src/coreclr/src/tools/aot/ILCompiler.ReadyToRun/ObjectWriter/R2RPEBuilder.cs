@@ -162,6 +162,12 @@ namespace ILCompiler.PEWriter
         private readonly int? _customPESectionAlignment;
 
         /// <summary>
+        /// Minimum final size of the text section. This can be used to keep the text section size constant
+        /// when experimenting with different method alignments.
+        /// </summary>
+        private readonly int _codeSectionPadding;
+
+        /// <summary>
         /// Constructor initializes the various control structures and combines the section list.
         /// </summary>
         /// <param name="target">Target environment specifier</param>
@@ -174,6 +180,7 @@ namespace ILCompiler.PEWriter
             string outputFileSimpleName,
             Func<RuntimeFunctionsTableNode> getRuntimeFunctionsTable,
             int? customPESectionAlignment,
+            int codeSectionPadding,
             Func<IEnumerable<Blob>, BlobContentId> deterministicIdProvider)
             : base(peHeaderBuilder, deterministicIdProvider: deterministicIdProvider)
         {
@@ -187,6 +194,7 @@ namespace ILCompiler.PEWriter
             _dataSectionIndex = _sectionBuilder.AddSection(DataSectionName, SectionCharacteristics.ContainsInitializedData | SectionCharacteristics.MemWrite | SectionCharacteristics.MemRead, 512);
 
             _customPESectionAlignment = customPESectionAlignment;
+            _codeSectionPadding = codeSectionPadding;
 
             if (r2rHeaderExportSymbol != null)
             {
@@ -291,6 +299,12 @@ namespace ILCompiler.PEWriter
         /// <param name="timeDateStamp">Timestamp to set in the PE header of the output R2R executable</param>
         public void Write(Stream outputStream, int? timeDateStamp)
         {
+            ILCompiler.PEWriter.Section textSection = _sectionBuilder.FindSection(TextSectionName);
+            if (textSection.Content.Count < _codeSectionPadding)
+            {
+                textSection.Content.WriteBytes(0, _codeSectionPadding - textSection.Content.Count);
+            }
+
             BlobBuilder outputPeFile = new BlobBuilder();
             Serialize(outputPeFile);
 

@@ -60,6 +60,12 @@ namespace ILCompiler.DependencyAnalysis
         /// </summary>
         private readonly int? _customPESectionAlignment;
 
+        /// <summary>
+        /// Method alignment is used for measuring runtime perf effects of individual methods
+        /// residing in different memory pages.
+        /// </summary>
+        private readonly int _codeSectionPadding;
+
 
 #if DEBUG
         private struct NodeInfo
@@ -79,13 +85,21 @@ namespace ILCompiler.DependencyAnalysis
         Dictionary<string, NodeInfo> _previouslyWrittenNodeNames = new Dictionary<string, NodeInfo>();
 #endif
 
-        public ReadyToRunObjectWriter(string objectFilePath, EcmaModule componentModule, IEnumerable<DependencyNode> nodes, NodeFactory factory, bool generateMapFile, int? customPESectionAlignment)
+        public ReadyToRunObjectWriter(
+            string objectFilePath,
+            EcmaModule componentModule,
+            IEnumerable<DependencyNode> nodes,
+            NodeFactory factory,
+            bool generateMapFile,
+            int? customPESectionAlignment,
+            int codeSectionPadding)
         {
             _objectFilePath = objectFilePath;
             _componentModule = componentModule;
             _nodes = nodes;
             _nodeFactory = factory;
             _customPESectionAlignment = customPESectionAlignment;
+            _codeSectionPadding = codeSectionPadding;
 
             if (generateMapFile)
             {
@@ -138,6 +152,7 @@ namespace ILCompiler.DependencyAnalysis
                     Path.GetFileName(_objectFilePath),
                     getRuntimeFunctionsTable,
                     _customPESectionAlignment,
+                    _codeSectionPadding,
                     peIdProvider);
 
                 NativeDebugDirectoryEntryNode nativeDebugDirectoryEntryNode = null;
@@ -302,10 +317,17 @@ namespace ILCompiler.DependencyAnalysis
             r2rPeBuilder.AddObjectData(data, section, name, mapFileBuilder);
         }
 
-        public static void EmitObject(string objectFilePath, EcmaModule componentModule, IEnumerable<DependencyNode> nodes, NodeFactory factory, bool generateMapFile, int? customPESectionAlignment)
+        public static void EmitObject(string objectFilePath, EcmaModule componentModule, IEnumerable<DependencyNode> nodes, NodeFactory factory, bool generateMapFile, int? customPESectionAlignment, int codeSectionPadding)
         {
             Console.WriteLine($@"Emitting R2R PE file: {objectFilePath}");
-            ReadyToRunObjectWriter objectWriter = new ReadyToRunObjectWriter(objectFilePath, componentModule, nodes, factory, generateMapFile, customPESectionAlignment);
+            ReadyToRunObjectWriter objectWriter = new ReadyToRunObjectWriter(
+                objectFilePath,
+                componentModule,
+                nodes,
+                factory,
+                generateMapFile,
+                customPESectionAlignment,
+                codeSectionPadding: codeSectionPadding);
             objectWriter.EmitPortableExecutable();
         }
     }

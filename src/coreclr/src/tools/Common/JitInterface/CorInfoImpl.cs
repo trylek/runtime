@@ -223,6 +223,7 @@ namespace Internal.JitInterface
                 _compilation.NodeFactory.Target.OptimumFunctionAlignment;
 
             alignment = Math.Max(alignment, _codeAlignment);
+            alignment = Math.Max(alignment, _compilation.CodeAlignment);
 
             var objectData = new ObjectNode.ObjectData(_code,
                                                        relocs,

@@ -237,6 +237,10 @@ namespace ILCompiler
         public ReadyToRunCompilationModuleGroupBase CompilationModuleGroup { get; }
         private readonly int? _customPESectionAlignment;
 
+        private readonly int _codeAlignment;
+        private readonly int _methodHoopCount;
+        private readonly int _codeSectionPadding;
+
         internal ReadyToRunCodegenCompilation(
             DependencyAnalyzerBase<NodeFactory> dependencyGraph,
             NodeFactory nodeFactory,
@@ -254,7 +258,10 @@ namespace ILCompiler
             ReadyToRunMethodLayoutAlgorithm methodLayoutAlgorithm,
             ReadyToRunFileLayoutAlgorithm fileLayoutAlgorithm,
             int? customPESectionAlignment,
-            bool verifyTypeAndFieldLayout)
+            bool verifyTypeAndFieldLayout,
+            int codeAlignment,
+            int methodHoopCount,
+            int codeSectionPadding)
             : base(
                   dependencyGraph,
                   nodeFactory,
@@ -284,6 +291,10 @@ namespace ILCompiler
             _profileData = profileData;
 
             _fileLayoutOptimizer = new ReadyToRunFileLayoutOptimizer(methodLayoutAlgorithm, fileLayoutAlgorithm, profileData, _nodeFactory);
+
+            _codeAlignment = codeAlignment;
+            _methodHoopCount = methodHoopCount;
+            _codeSectionPadding = codeSectionPadding;
         }
 
         private readonly static string s_folderUpPrefix = ".." + Path.DirectorySeparatorChar;
@@ -298,7 +309,14 @@ namespace ILCompiler
             using (PerfEventSource.StartStopEvents.EmittingEvents())
             {
                 NodeFactory.SetMarkingComplete();
-                ReadyToRunObjectWriter.EmitObject(outputFile, componentModule: null, nodes, NodeFactory, _generateMapFile, _customPESectionAlignment);
+                ReadyToRunObjectWriter.EmitObject(
+                    outputFile,
+                    componentModule: null,
+                    nodes,
+                    NodeFactory,
+                    _generateMapFile,
+                    _customPESectionAlignment,
+                    codeSectionPadding: _codeSectionPadding);
                 CompilationModuleGroup moduleGroup = _nodeFactory.CompilationModuleGroup;
 
                 if (moduleGroup.IsCompositeBuildMode)
@@ -363,7 +381,15 @@ namespace ILCompiler
             }
             componentGraph.ComputeMarkedNodes();
             componentFactory.Header.Add(Internal.Runtime.ReadyToRunSectionType.OwnerCompositeExecutable, ownerExecutableNode, ownerExecutableNode);
-            ReadyToRunObjectWriter.EmitObject(outputFile, componentModule: inputModule, componentGraph.MarkedNodeList, componentFactory, generateMapFile: false, customPESectionAlignment: null);
+            ReadyToRunObjectWriter.EmitObject(
+                outputFile,
+                componentModule:
+                inputModule,
+                componentGraph.MarkedNodeList,
+                componentFactory,
+                generateMapFile: false,
+                customPESectionAlignment: null,
+                codeSectionPadding: _codeSectionPadding);
         }
 
         public override void WriteDependencyLog(string outputFileName)
@@ -530,5 +556,8 @@ namespace ILCompiler
         }
 
         public ISymbolNode GetFieldRvaData(FieldDesc field) => NodeFactory.CopiedFieldRva(field);
+
+        public int CodeAlignment => _codeAlignment;
+        public int MethodHoopCount => _methodHoopCount;
     }
 }

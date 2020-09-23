@@ -30,6 +30,9 @@ namespace ILCompiler
         private ReadyToRunFileLayoutAlgorithm _r2rFileLayoutAlgorithm;
         private int? _customPESectionAlignment;
         private bool _verifyTypeAndFieldLayout;
+        private int _codeAlignment;
+        private int _codeSectionPadding;
+        private int _methodHoopCount;
 
         private string _jitPath;
         private string _outputFile;
@@ -159,6 +162,24 @@ namespace ILCompiler
             return this;
         }
 
+        public ReadyToRunCodegenCompilationBuilder UseCodeAlignment(int codeAlignment)
+        {
+            _codeAlignment = codeAlignment;
+            return this;
+        }
+
+        public ReadyToRunCodegenCompilationBuilder UseMethodHoopCount(int methodHoopCount)
+        {
+            _methodHoopCount = methodHoopCount;
+            return this;
+        }
+
+        public ReadyToRunCodegenCompilationBuilder UseCodeSectionPadding(int codeSectionPadding)
+        {
+            _codeSectionPadding = codeSectionPadding;
+            return this;
+        }
+
         public override ICompilation ToCompilation()
         {
             // TODO: only copy COR headers for single-assembly build and for composite build with embedded MSIL
@@ -248,7 +269,10 @@ namespace ILCompiler
                 _r2rMethodLayoutAlgorithm,
                 _r2rFileLayoutAlgorithm,
                 _customPESectionAlignment,
-                _verifyTypeAndFieldLayout);
+                _verifyTypeAndFieldLayout,
+                codeAlignment: _codeAlignment,
+                methodHoopCount: _methodHoopCount,
+                codeSectionPadding: _codeSectionPadding);
         }
     }
 }
