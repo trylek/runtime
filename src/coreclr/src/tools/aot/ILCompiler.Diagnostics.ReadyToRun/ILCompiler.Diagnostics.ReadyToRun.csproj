@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>$(NetCoreAppToolCurrent)</TargetFramework>
+  </PropertyGroup>
+
+  <Import Project="$(RepositoryEngineeringDir)DiaSymReaderNative.targets" />
+
+</Project>

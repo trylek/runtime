@@ -36,7 +36,9 @@ namespace R2RDump
             command.AddOption(new Option<bool>(new[] { "--inlineSignatureBinary", "--isb" }, "Embed binary signature into its textual representation"));
             command.AddOption(new Option<bool>(new[] { "--signatureBinary", "--sb" }, "Append signature binary to its textual representation"));
             command.AddOption(new Option<bool>(new[] { "--create-pdb" }, "Create PDB"));
-            command.AddOption(new Option<string>(new[] { "--pdb-path" }, "PDB output path for --createpdb"));
+            command.AddOption(new Option<string>(new[] { "--pdb-path" }, "PDB output path for --create-pdb"));
+            command.AddOption(new Option<bool>(new[] { "--create-perf-map" }, "Create PerfMap file"));
+            command.AddOption(new Option<string>(new[] { "--perf-map-path" }, "PerfMap output path for --create-perf-map"));
             return command;
         }
     }

@@ -24,6 +24,7 @@
     <PackageReference Include="System.CommandLine">
       <Version>$(SystemCommandLineVersion)</Version>
     </PackageReference>
+    <ProjectReference Include="..\aot\ILCompiler.Diagnostics.ReadyToRun\ILCompiler.Diagnostics.ReadyToRun.csproj" />
     <ProjectReference Include="..\aot\ILCompiler.Reflection.ReadyToRun\ILCompiler.Reflection.ReadyToRun.csproj" />
   </ItemGroup>
 </Project>

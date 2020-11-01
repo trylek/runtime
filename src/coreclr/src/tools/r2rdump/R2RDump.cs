@@ -15,7 +15,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 using ILCompiler.Reflection.ReadyToRun;
-using ILCompiler.PdbWriter;
+using ILCompiler.Diagnostics;
 
 using Internal.Runtime;
 using System.Runtime.InteropServices;
@@ -50,6 +50,9 @@ namespace R2RDump
 
         public bool CreatePDB { get; set; }
         public string PdbPath { get; set; }
+
+        public bool CreatePerfMap { get; set; }
+        public string PerfMapPath { get; set; }
 
         public FileInfo[] Reference { get; set; }
         public DirectoryInfo[] ReferencePath { get; set; }
@@ -360,7 +363,7 @@ namespace R2RDump
         public void Dump(ReadyToRunReader r2r)
         {
             _dumper.Begin();
-            bool standardDump = !(_options.EntryPoints || _options.CreatePDB);
+            bool standardDump = !(_options.EntryPoints || _options.CreatePDB || _options.CreatePerfMap);
 
             if (_options.Header && standardDump)
             {
@@ -409,7 +412,17 @@ namespace R2RDump
                         pdbPath = Path.GetDirectoryName(r2r.Filename);
                     }
                     var pdbWriter = new PdbWriter(pdbPath, PDBExtraData.None);
-                    pdbWriter.WritePDBData(r2r.Filename, ProducePdbWriterMethods(r2r));
+                    pdbWriter.WritePDBData(r2r.Filename, ProducePdbWriterMethods());
+                }
+
+                if (_options.CreatePerfMap)
+                {
+                    string perfMapPath = _options.PerfMapPath;
+                    if (string.IsNullOrEmpty(perfMapPath))
+                    {
+                        perfMapPath = Path.ChangeExtension(r2r.Filename, ".map"); // TODO - MVID
+                    }
+                    PerfMapWriter.Write(perfMapPath, ProducePdbWriterMethods());
                 }
 
                 if (standardDump)
@@ -421,16 +434,18 @@ namespace R2RDump
             _dumper.End();
         }
 
-        IEnumerable<MethodInfo> ProducePdbWriterMethods(ReadyToRunReader r2r)
+        IEnumerable<MethodInfo> ProducePdbWriterMethods()
         {
             foreach (var method in _dumper.NormalizedMethods())
             {
                 MethodInfo mi = new MethodInfo();
                 mi.Name = method.SignatureString;
                 mi.HotRVA = (uint)method.RuntimeFunctions[0].StartAddress;
+                mi.HotLength = (uint)method.RuntimeFunctions[0].Size;
                 mi.MethodToken = (uint)MetadataTokens.GetToken(method.ComponentReader.MetadataReader, method.MethodHandle);
                 mi.AssemblyName = method.ComponentReader.MetadataReader.GetString(method.ComponentReader.MetadataReader.GetAssemblyDefinition().Name);
                 mi.ColdRVA = 0;
+                mi.ColdLength = 0;
                 
                 yield return mi;
             }
