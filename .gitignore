@@ -310,7 +310,6 @@ TestWrappers_arm_[r|R]elease
 TestWrappers_arm64_[d|D]ebug
 TestWrappers_arm64_[c|C]hecked
 TestWrappers_arm64_[r|R]elease
-tests/src/common/test_runtime/project.json
 
 Vagrantfile
 .vagrant
@@ -330,7 +329,7 @@ cross/android-rootfs/*
 *.pyc
 
 # JIT32 files
-src/jit32
+jit32
 
 # performance testing sandbox
 sandbox
@@ -347,11 +346,11 @@ linker
 # On Unix, make your own by running these commands from the repo root:
 # ln -s $(pwd)/src/libraries/System.Private.CoreLib/src src/coreclr/src/System.Private.CoreLib/shared
 # ln -s $(pwd)/src/libraries/Common/src src/coreclr/src/System.Private.CoreLib/common
-src/coreclr/src/System.Private.CoreLib/shared
-src/coreclr/src/System.Private.CoreLib/common
+src/coreclr/System.Private.CoreLib/shared
+src/coreclr/System.Private.CoreLib/common
 
 # The debug directory should not be ignored
-!src/coreclr/src/debug
+!src/coreclr/debug
 
 # Mono Wasm-specific excludes
 src/mono/wasm/emsdk/
