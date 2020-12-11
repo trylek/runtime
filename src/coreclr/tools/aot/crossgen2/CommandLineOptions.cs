@@ -50,6 +50,7 @@ namespace ILCompiler
         public string MethodLayout;
         public string FileLayout;
         public bool VerifyTypeAndFieldLayout;
+        public string CallChainProfileFile;
 
         public string SingleMethodTypeName;
         public string SingleMethodName;
@@ -119,6 +120,7 @@ namespace ILCompiler
                 syntax.DefineOption("method-layout", ref MethodLayout, SR.MethodLayoutOption);
                 syntax.DefineOption("file-layout", ref FileLayout, SR.FileLayoutOption);
                 syntax.DefineOption("verify-type-and-field-layout", ref VerifyTypeAndFieldLayout, SR.VerifyTypeAndFieldLayoutOption);
+                syntax.DefineOption("callchain-profile", ref CallChainProfileFile, SR.CallChainProfileFile);
 
                 syntax.DefineOption("h|help", ref Help, SR.HelpOption);
 
