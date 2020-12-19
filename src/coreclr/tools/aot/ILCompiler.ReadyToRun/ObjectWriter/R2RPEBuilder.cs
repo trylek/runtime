@@ -238,11 +238,12 @@ namespace ILCompiler.PEWriter
         /// <summary>
         /// Emit a single object data item into the output R2R PE file using the section builder.
         /// </summary>
-        /// <param name="objectData">Object data to emit</param>
+        /// <param name="objectData">Object node to emit data for</param>
+        /// <param name="method">Optional method to record for the object data</param>
         /// <param name="section">Target section</param>
         /// <param name="name">Textual name of the object data for diagnostic purposese</param>
         /// <param name="mapFileBuilder">Optional map file builder to output the data item to</param>
-        public void AddObjectData(ObjectNode.ObjectData objectData, ObjectNodeSection section, string name, MapFileBuilder mapFileBuilder)
+        public void AddObjectData(ObjectNode.ObjectData objectData, MethodDesc method, ObjectNodeSection section, string name, MapFileBuilder mapFileBuilder)
         {
             if (_written)
             {
@@ -266,7 +267,7 @@ namespace ILCompiler.PEWriter
                     throw new NotImplementedException();
             }
 
-            _sectionBuilder.AddObjectData(objectData, targetSectionIndex, name, mapFileBuilder);
+            _sectionBuilder.AddObjectData(objectData, method, targetSectionIndex, name, mapFileBuilder);
         }
 
         /// <summary>

@@ -8,7 +8,10 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+
 using ILCompiler.DependencyAnalysis;
+
+using Internal.TypeSystem;
 
 namespace ILCompiler.PEWriter
 {
@@ -126,19 +129,25 @@ namespace ILCompiler.PEWriter
             }
         }
 
+        private readonly TargetDetails _target;
+
         private readonly List<MapFileNode> _nodes;
         private readonly List<MapFileSymbol> _symbols;
         private readonly List<Section> _sections;
+        private readonly Dictionary<MethodDesc, MapFileSymbol> _methods;
 
         private readonly Dictionary<RelocType, int> _relocCounts;
 
         private long _fileSize;
 
-        public MapFileBuilder()
+        public MapFileBuilder(TargetDetails target)
         {
+            _target = target;
+
             _nodes = new List<MapFileNode>();
             _symbols = new List<MapFileSymbol>();
             _sections = new List<Section>();
+            _methods = new Dictionary<MethodDesc, MapFileSymbol>();
 
             _relocCounts = new Dictionary<RelocType, int>();
         }
@@ -155,14 +164,23 @@ namespace ILCompiler.PEWriter
             _relocCounts[relocType] = relocTypeCount + 1;
         }
 
-        public void AddSymbol(MapFileSymbol symbol)
+        public void AddSymbol(MapFileSymbol symbol, MethodDesc method)
         {
             _symbols.Add(symbol);
+            if (method != null)
+            {
+                _methods.Add(method, symbol);
+            }
         }
 
         public void AddSection(Section section)
         {
             _sections.Add(section);
+        }
+
+        public void AddMethod(MethodDesc method, MapFileSymbol symbol)
+        {
+            _methods.Add(method, symbol);
         }
 
         public void SetFileSize(long fileSize)
@@ -184,6 +202,44 @@ namespace ILCompiler.PEWriter
                 WriteRelocTypeStatistics(mapWriter);
                 WriteSections(mapWriter);
                 WriteMap(mapWriter);
+            }
+        }
+
+        public void SaveProfileMap(string profileMapFileName, CallChainProfile callChainProfile)
+        {
+            Console.WriteLine("Emitting profile map file: {0}", profileMapFileName);
+
+            using (StreamWriter profileMapWriter = new StreamWriter(profileMapFileName))
+            {
+                long lowScatteringFactor = 0;
+                long highScatteringFactor = 0;
+                foreach (KeyValuePair<MethodDesc, Dictionary<MethodDesc, int>> keyTargets in callChainProfile.ResolvedProfileData)
+                {
+                    MethodDesc caller = keyTargets.Key;
+                    if (_methods.TryGetValue(caller, out MapFileSymbol callerSymbol))
+                    {
+                        bool firstCallee = true;
+                        foreach (KeyValuePair<MethodDesc, int> callee in keyTargets.Value)
+                        {
+                            if (_methods.TryGetValue(callee.Key, out MapFileSymbol calleeSymbol))
+                            {
+                                int scatteringFactor = ScatteringFactor(callerSymbol, calleeSymbol);
+                                int lowScatteringFactorContribution = scatteringFactor;
+                                int highScatteringFactorContribution = scatteringFactor * callee.Value;
+                                if (firstCallee)
+                                {
+                                    profileMapWriter.WriteLine($"CALLER: {caller}");
+                                    firstCallee = false;
+                                }
+                                profileMapWriter.WriteLine($"  CALLEE: {callee} LOW: {lowScatteringFactorContribution} HIGH: {highScatteringFactorContribution}");
+                                lowScatteringFactor += lowScatteringFactorContribution;
+                                highScatteringFactor += highScatteringFactorContribution;
+                            }
+                        }
+                    }
+                }
+                profileMapWriter.WriteLine("--------------------------------");
+                profileMapWriter.WriteLine($"Scattering factor high / low: {highScatteringFactor} / {lowScatteringFactor} = {highScatteringFactor / (double)lowScatteringFactor:F3}");
             }
         }
 
@@ -410,6 +466,39 @@ namespace ILCompiler.PEWriter
             writer.WriteLine();
             writer.WriteLine(title);
             writer.WriteLine(new string('-', title.Length));
+        }
+
+        /// <summary>
+        /// Measure of page mapping cost upon calling from symbol1 to symbol2; when the two
+        /// methods belong to different memory pages, app startup or potentially
+        /// steady state execution at memory limits may delay the call due to the page mapping
+        /// process.
+        /// </summary>
+        /// <param name="callerSymbol">Caller method symbol</param>
+        /// <param name="calleeSymbol">Callee method symbol</param>
+        /// <param name="target">Target platform info (typically page size is implied by the CPU architecture)</param>
+        /// <returns></returns>
+        private int ScatteringFactor(MapFileSymbol callerSymbol, MapFileSymbol calleeSymbol)
+        {
+            // TODO: TargetDetails property
+            int pageSizeAddressBits = _target.Architecture switch
+            {
+                TargetArchitecture.X86 => 12,
+                TargetArchitecture.X64 => 16,
+                TargetArchitecture.ARM => 12,
+                TargetArchitecture.ARM64 => 16,
+                _ => throw new NotImplementedException(_target.Architecture.ToString())
+            };
+
+            // TODO: store and use function length
+            long callerPage = SymbolAddress(callerSymbol) >> pageSizeAddressBits;
+            long calleePage = SymbolAddress(calleeSymbol) >> pageSizeAddressBits;
+            return (callerPage != calleePage ? 1 : 0);
+        }
+
+        private int SymbolAddress(MapFileSymbol symbol)
+        {
+            return _sections[symbol.SectionIndex].RVAWhenPlaced + symbol.Offset;
         }
     }
 }

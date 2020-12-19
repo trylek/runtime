@@ -307,7 +307,7 @@ namespace ILCompiler
             using (PerfEventSource.StartStopEvents.EmittingEvents())
             {
                 NodeFactory.SetMarkingComplete();
-                ReadyToRunObjectWriter.EmitObject(outputFile, componentModule: null, nodes, NodeFactory, _generateMapFile, _generateMapCsvFile, _customPESectionAlignment);
+                ReadyToRunObjectWriter.EmitObject(outputFile, componentModule: null, nodes, NodeFactory, _generateMapFile, _generateMapCsvFile, _customPESectionAlignment, _profileData);
                 CompilationModuleGroup moduleGroup = _nodeFactory.CompilationModuleGroup;
 
                 if (moduleGroup.IsCompositeBuildMode)
@@ -372,7 +372,15 @@ namespace ILCompiler
             }
             componentGraph.ComputeMarkedNodes();
             componentFactory.Header.Add(Internal.Runtime.ReadyToRunSectionType.OwnerCompositeExecutable, ownerExecutableNode, ownerExecutableNode);
-            ReadyToRunObjectWriter.EmitObject(outputFile, componentModule: inputModule, componentGraph.MarkedNodeList, componentFactory, generateMapFile: false, generateMapCsvFile: false, customPESectionAlignment: 0);
+            ReadyToRunObjectWriter.EmitObject(
+                outputFile,
+                componentModule: inputModule,
+                componentGraph.MarkedNodeList,
+                componentFactory,
+                generateMapFile: false,
+                generateMapCsvFile: false,
+                customPESectionAlignment: 0,
+                profileData: _profileData);
         }
 
         public override void WriteDependencyLog(string outputFileName)

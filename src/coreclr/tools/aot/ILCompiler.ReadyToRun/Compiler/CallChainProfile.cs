@@ -367,7 +367,8 @@ namespace ILCompiler
             Console.WriteLine($"Cache hits: {_cacheHits} ({(double)_cacheHits / (double)cacheTotal:P})");
             Console.WriteLine($"Cache misses: {_cacheMisses}");
         }
-    }
 
+        public IReadOnlyDictionary<MethodDesc, Dictionary<MethodDesc, int>> ResolvedProfileData => _resolvedProfileData;
+    }
 }
 

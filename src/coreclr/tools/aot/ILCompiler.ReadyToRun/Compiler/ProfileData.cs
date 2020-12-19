@@ -91,6 +91,7 @@ namespace ILCompiler
     public class ProfileDataManager
     {
         private readonly IBCProfileParser _ibcParser;
+        private readonly CallChainProfile _callChainProfile;
         private readonly List<ProfileData> _inputData = new List<ProfileData>();
         private readonly Dictionary<MethodDesc, MethodProfileData> _mergedProfileData = new Dictionary<MethodDesc, MethodProfileData>();
         private readonly Dictionary<ModuleDesc, HashSet<MethodDesc>> _placedProfileMethods = new Dictionary<ModuleDesc, HashSet<MethodDesc>>();
@@ -104,10 +105,12 @@ namespace ILCompiler
                                   IEnumerable<ModuleDesc> versionBubbleModules,
                                   ModuleDesc nonLocalGenericsHome,
                                   IReadOnlyList<string> mibcFiles,
+                                  CallChainProfile callChainProfile,
                                   CompilerTypeSystemContext context,
                                   ReadyToRunCompilationModuleGroupBase compilationGroup)
         {
             _ibcParser = new IBCProfileParser(logger, possibleReferenceModules);
+            _callChainProfile = callChainProfile;
             _compilationGroup = compilationGroup;
             HashSet<ModuleDesc> versionBubble = new HashSet<ModuleDesc>(versionBubbleModules);
 
@@ -247,5 +250,7 @@ namespace ILCompiler
                 return profileData;
             }
         }
+
+        public CallChainProfile ProfileData => _callChainProfile;
     }
 }

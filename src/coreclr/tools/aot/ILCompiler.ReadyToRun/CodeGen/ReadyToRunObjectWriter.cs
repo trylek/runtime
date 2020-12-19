@@ -53,10 +53,12 @@ namespace ILCompiler.DependencyAnalysis
         /// Set to non-null when the executable generator should output a map file.
         /// </summary>
         private readonly MapFileBuilder _mapFileBuilder;
+
         /// <summary>
         /// True when the map file builder should emit a textual map file
         /// </summary>
         private bool _generateMapFile;
+
         /// <summary>
         /// True when the map file builder should emit a CSV formatted map file
         /// </summary>
@@ -68,6 +70,10 @@ namespace ILCompiler.DependencyAnalysis
         /// </summary>
         private readonly int _customPESectionAlignment;
 
+        /// <summary>
+        /// Profile data (null when not available).
+        /// </summary>
+        private ProfileDataManager _profileData;
 
 #if DEBUG
         private struct NodeInfo
@@ -87,7 +93,15 @@ namespace ILCompiler.DependencyAnalysis
         Dictionary<string, NodeInfo> _previouslyWrittenNodeNames = new Dictionary<string, NodeInfo>();
 #endif
 
-        public ReadyToRunObjectWriter(string objectFilePath, EcmaModule componentModule, IEnumerable<DependencyNode> nodes, NodeFactory factory, bool generateMapFile, bool generateMapCsvFile, int customPESectionAlignment)
+        public ReadyToRunObjectWriter(
+            string objectFilePath,
+            EcmaModule componentModule,
+            IEnumerable<DependencyNode> nodes,
+            NodeFactory factory,
+            bool generateMapFile,
+            bool generateMapCsvFile,
+            int customPESectionAlignment,
+            ProfileDataManager profileData)
         {
             _objectFilePath = objectFilePath;
             _componentModule = componentModule;
@@ -96,10 +110,11 @@ namespace ILCompiler.DependencyAnalysis
             _customPESectionAlignment = customPESectionAlignment;
             _generateMapFile = generateMapFile;
             _generateMapCsvFile = generateMapCsvFile;
+            _profileData = profileData;
             
             if (generateMapFile || generateMapCsvFile)
             {
-                _mapFileBuilder = new MapFileBuilder();
+                _mapFileBuilder = new MapFileBuilder(_nodeFactory.Target);
             }
         }
 
@@ -170,6 +185,7 @@ namespace ILCompiler.DependencyAnalysis
                         continue;
 
                     ObjectData nodeContents = node.GetData(_nodeFactory);
+                    MethodDesc nodeMethod = null;
 
                     if (node is NativeDebugDirectoryEntryNode nddeNode)
                     {
@@ -190,6 +206,11 @@ namespace ILCompiler.DependencyAnalysis
                         lastImportThunk = importThunkNode;
                     }
 
+                    if (node is IMethodNode methodNode)
+                    {
+                        nodeMethod = methodNode.Method;
+                    }
+
                     string name = null;
 
                     if (_mapFileBuilder != null)
@@ -207,7 +228,7 @@ namespace ILCompiler.DependencyAnalysis
                         }
                     }
 
-                    EmitObjectData(r2rPeBuilder, nodeContents, nodeIndex, name, node.Section, _mapFileBuilder);
+                    EmitObjectData(r2rPeBuilder, nodeContents, nodeMethod, nodeIndex, name, node.Section, _mapFileBuilder);
                     lastWrittenObjectNode = node;
                 }
 
@@ -255,6 +276,12 @@ namespace ILCompiler.DependencyAnalysis
                     {
                         string mapFileName = Path.ChangeExtension(_objectFilePath, ".map");
                         _mapFileBuilder.SaveMap(mapFileName);
+
+                        if (_profileData.ProfileData != null)
+                        {
+                            string profileMapFile = Path.ChangeExtension(_objectFilePath, ".profilemap");
+                            _mapFileBuilder.SaveProfileMap(profileMapFile, _profileData.ProfileData);
+                        }
                     }
 
                     if (_generateMapCsvFile)
@@ -263,6 +290,7 @@ namespace ILCompiler.DependencyAnalysis
                         string mapCsvFileName = Path.ChangeExtension(_objectFilePath, ".map.csv");
                         _mapFileBuilder.SaveCsv(nodeStatsCsvFileName, mapCsvFileName);
                     }
+
                 }
 
                 succeeded = true;
@@ -295,12 +323,13 @@ namespace ILCompiler.DependencyAnalysis
         /// Emit a single ObjectData into the proper section of the output R2R PE executable.
         /// </summary>
         /// <param name="r2rPeBuilder">R2R PE builder to output object data to</param>
-        /// <param name="data">ObjectData blob to emit</param>
+        /// <param name="data">Object data to emit</param>
+        /// <param name="method">Optional method name</param>
         /// <param name="nodeIndex">Logical index of the emitted node for diagnostic purposes</param>
         /// <param name="name">Textual representation of the ObjecData blob in the map file</param>
         /// <param name="section">Section to emit the blob into</param>
         /// <param name="mapFile">Map file output stream</param>
-        private void EmitObjectData(R2RPEBuilder r2rPeBuilder, ObjectData data, int nodeIndex, string name, ObjectNodeSection section, MapFileBuilder mapFileBuilder)
+        private void EmitObjectData(R2RPEBuilder r2rPeBuilder, ObjectData data, MethodDesc method, int nodeIndex, string name, ObjectNodeSection section, MapFileBuilder mapFileBuilder)
         {
 #if DEBUG
             for (int symbolIndex = 0; symbolIndex < data.DefinedSymbols.Length; symbolIndex++)
@@ -319,13 +348,21 @@ namespace ILCompiler.DependencyAnalysis
             }
 #endif
 
-            r2rPeBuilder.AddObjectData(data, section, name, mapFileBuilder);
+            r2rPeBuilder.AddObjectData(data, method, section, name, mapFileBuilder);
         }
 
-        public static void EmitObject(string objectFilePath, EcmaModule componentModule, IEnumerable<DependencyNode> nodes, NodeFactory factory, bool generateMapFile, bool generateMapCsvFile, int customPESectionAlignment)
+        public static void EmitObject(
+            string objectFilePath,
+            EcmaModule componentModule,
+            IEnumerable<DependencyNode> nodes,
+            NodeFactory factory,
+            bool generateMapFile,
+            bool generateMapCsvFile,
+            int customPESectionAlignment,
+            ProfileDataManager profileData)
         {
             Console.WriteLine($@"Emitting R2R PE file: {objectFilePath}");
-            ReadyToRunObjectWriter objectWriter = new ReadyToRunObjectWriter(objectFilePath, componentModule, nodes, factory, generateMapFile, generateMapCsvFile, customPESectionAlignment);
+            ReadyToRunObjectWriter objectWriter = new ReadyToRunObjectWriter(objectFilePath, componentModule, nodes, factory, generateMapFile, generateMapCsvFile, customPESectionAlignment, profileData);
             objectWriter.EmitPortableExecutable();
         }
     }
