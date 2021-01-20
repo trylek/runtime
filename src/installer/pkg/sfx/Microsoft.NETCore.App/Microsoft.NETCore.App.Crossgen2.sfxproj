@@ -18,6 +18,7 @@
     <PublishReadyToRun>true</PublishReadyToRun>
     <!-- Disable crossgen on FreeBSD, NetBSD, illumos and Solaris for now. This can be revisited when we have full support. -->
     <PublishReadyToRun Condition="'$(TargetOS)'=='FreeBSD' Or '$(TargetOS)'=='NetBSD' Or '$(TargetOS)'=='illumos' Or '$(TargetOS)'=='Solaris'">false</PublishReadyToRun>
+    <PublishReadyToRunUseCrossgen2>true</PublishReadyToRunUseCrossgen2>
     <HostJsonTargetPath>tools/</HostJsonTargetPath>
     <PermitDllAndExeFilesLackingFileVersion>true</PermitDllAndExeFilesLackingFileVersion>
   </PropertyGroup>
