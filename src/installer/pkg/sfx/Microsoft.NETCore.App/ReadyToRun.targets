@@ -1,10 +1,19 @@
 <Project>
   <Target Name="ResolveReadyToRunCompilers" DependsOnTargets="ResolveRuntimeFilesFromLocalBuild">
+    <PropertyGroup>
+      <PublishReadyToRunEmitSymbols>true</PublishReadyToRunEmitSymbols>
+      <ScriptExt>.sh</ScriptExt>
+      <ScriptExt Condition="'$(OS)' == 'Windows_NT'">.cmd</ScriptExt>
+    </PropertyGroup>
+
     <ItemGroup Condition="'$(RuntimeFlavor)' != 'Mono'">
       <_crossTargetJit Include="@(CoreCLRCrossTargetFiles)" Condition="'%(FileName)' == '$(LibPrefix)clrjit' and '%(Extension)' == '$(LibSuffix)'" />
       <_clrjit Include="@(RuntimeFiles)" Condition="'%(FileName)' == '$(LibPrefix)clrjit' and '%(Extension)' == '$(LibSuffix)'" />
       <_crossTargetCrossgen Include="@(CoreCLRCrossTargetFiles)" Condition="'%(FileName)' == 'crossgen' and '%(Extension)' == '$(ExeSuffix)'" />
       <_crossgen Include="@(RuntimeFiles)" Condition="'%(FileName)' == 'crossgen' and '%(Extension)' == '$(ExeSuffix)'" />
+
+      <_crossgen2 Include="$(CoreCLRCrossgen2Dir)\crossgen2$(LibSuffix)" />
+      <_crossgen2Jit Include="$(CoreCLRCrossgen2Dir)\$(JitFileName)$(JitExtension)" />
     </ItemGroup>
     <ItemGroup Condition="'@(_crossTargetJit)' != '' and '@(_crossTargetCrossgen)' != ''">
       <CrossgenTool Include="@(_crossTargetCrossgen->ClearMetadata())"
@@ -15,6 +24,12 @@
       <CrossgenTool Include="@(_crossgen->ClearMetadata())"
                     JitPath="@(_clrjit)"
                     DiaSymReader="$(_diaSymReaderPathIfExists)" />
+    </ItemGroup>
+    <ItemGroup>
+      <Crossgen2Tool Include="@(_crossgen2->ClearMetadata())"
+                     DotNetHostPath="$(RepoRoot)\dotnet$(ScriptExt)"
+                     TargetOS="$(TargetOS)"
+                     TargetArch="$(TargetArchitecture)" />
     </ItemGroup>
   </Target>
 </Project>
