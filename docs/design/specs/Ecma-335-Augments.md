@@ -366,3 +366,72 @@ In addition to the guarantees that apply to all type initializers, the CLI shall
 2. A module initializer shall run exactly once for any given module unless explicitly called by user code.
 
 3. No method other than those called directly or indirectly from the module initializer will be able to access the types, methods, or data in a module before its initializer completes execution.
+
+## Static Interface Methods
+
+This WIP section is intended to specify ECMA standard changes implied by the static interface methods. For the reference ECMA spec, I have used
+
+https://www.ecma-international.org/publications-and-standards/standards/ecma-335/
+
+(6th edition, June 2012), please let me know if I should look at a different version. It also kind of sucks that we cannot reference the ECMA spec
+dynamically via some hyperlinks - I assume there's no online version of the spec that would support referring to the individual sections and such.
+
+Based on initial audit I believe changes potentially need to be made at least to the following sections:
+
+* Virtual methods (I.8.4.4, page 25)
+* Explicit method overrides (II.9.10, page 136)
+* Constraints on generic parameters (II.9.11, page 137)
+* Introducing and overriding virtual methods (II.10.3, page 147)
+* Semantics of interfaces (II.12, page 157)
+* Interface implementation examples (II.12.2.1, page 159)
+* Defining, referencing and calling methods (II.15, page 177)
+* constrained. - (prefix) invoke a member on a value of a variable type (III.2.1, page 316)
+* call - call a method (III.3.19, page 342)
+
+We could use the "interface implementation examples" section to outline some positive and negative examples that can be also used as a basis for
+testing.
+
+Some aspects that are unclear to me now:
+
+* Especially in light of the default interface work, would it make sense to allow "overriding" (implementing) a static interface method
+  in a derived interface? If we don't plan to allow this, is it just to scope the work or does some fundamental issue prevent it?
+* What is the reason why we only allow "abstract" static interface method declarations, not "virtual" in the sense that the interface
+  would provide a default implementation that a class implementing the interface could optionally override?
+
+### I.8.4.4, Virtual Methods
+
+(Add second paragraph)
+
+Static interface methods may be marked as virtual. Valid object types implementing such interfaces shall provide implementations
+for these methods by means of Method Implementations (II.15.1.4). Polymorphic behavior of calls to these methods is facilitated
+by the constrained. call IL instruction where the constrained. prefix specifies the type to use for lookup of the static interface
+method.
+
+### II.9.10, Explicit Method Overrides
+
+(It is unclear to me what is the expected general behavior of generic static virtual methods; it should probably be stated here).
+
+### II.9.11, Constrains on Generic Parameters
+
+I think that the main point here is that the constraint on a generic type argument (IArithmetic&lt;T&gt;) implies that the compiler
+will generate the appropriate constrained. prefix corresponding to the actual generic type parameter; I have no idea how that
+works with shared generics right now.
+
+### II.10.3 Introducing and overriding virtual methods
+
+For now I don't see any particular formulation in this section that would need amending. We may want to mention virtual static
+interface methods as a somewhat specific case.
+
+### II.12 Semantics of Interfaces
+
+(Add to the end of the 1st paragraph)
+
+Interfaces may define static virtual methods that get resolved at runtime based on actual types involved.
+
+### II.12.2 Implementing virtual methods on interfaces
+
+For now I'm stuck in this complex section, I would welcome initial feedback as to whether what I've shared so far makes any sense.
+
+Thanks
+
+Tomas
