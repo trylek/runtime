@@ -28,5 +28,8 @@ class Program
             string arg = args[i];
             traces.Add(ExecutionTrace.LoadFile(arg));
         }
+
+        Statistics statistics = new Statistics(traces, Console.Out);
+        statistics.DumpModuleInstructionMap();
     }
 }

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Xml;
 
 struct InstructionSequence
+
 {
     public long Count;
     public long Bytes;
@@ -15,6 +16,41 @@ struct InstructionSequence
         {
             Count = Count + sequence.Count,
             Bytes = Bytes + sequence.Bytes,
+        };
+    }
+
+    public InstructionSequence Minus(InstructionSequence sequence)
+    {
+        return new InstructionSequence()
+        {
+            Count = Count - sequence.Count,
+            Bytes = Bytes - sequence.Bytes,
+        };
+    }
+
+    public InstructionSequence Max(InstructionSequence sequence)
+    {
+        return new InstructionSequence()
+        {
+            Count = Math.Max(Count, sequence.Count),
+            Bytes = Math.Max(Bytes, sequence.Bytes),
+        };
+    }
+
+    public InstructionSequence Min(InstructionSequence sequence)
+    {
+        if (Count == 0)
+        {
+            return sequence;
+        }
+        if (sequence.Count == 0)
+        {
+            return this;
+        }
+        return new InstructionSequence()
+        {
+            Count = Math.Min(Count, sequence.Count),
+            Bytes = Math.Min(Bytes, sequence.Bytes),
         };
     }
 
@@ -38,6 +74,43 @@ struct InstructionSequence
             reader.Read();
         }
     }
+
+    public override bool Equals(object? other)
+    {
+        return other is InstructionSequence seq && seq.Count == this.Count && seq.Bytes == this.Bytes;
+    }
+
+    public override int GetHashCode()
+    {
+        return Count.GetHashCode() ^ Bytes.GetHashCode();
+    }
+}
+
+struct ModuleSymbol
+{
+    public string Module;
+    public string Symbol;
+
+    public ModuleSymbol(string module, string symbol)
+    {
+        Module = module;
+        Symbol = symbol;
+    }
+
+    public override string ToString()
+    {
+        return $"{Module}!{Symbol}";
+    }
+
+    public override int GetHashCode()
+    {
+        return (Module != null ? unchecked(31 * Module.GetHashCode()) : 0) ^ (Symbol != null ? Symbol.GetHashCode() : 0);
+    }
+
+    public override bool Equals(object? obj)
+    {
+        return obj is ModuleSymbol sym && Module == sym.Module && Symbol == sym.Symbol;
+    }
 }
 
 class CodeStream
@@ -46,8 +119,7 @@ class CodeStream
     public ulong EndPC;
     public ulong SP;
     public InstructionSequence Instructions;
-    public string Module = "";
-    public string Symbol = "";
+    public ModuleSymbol ModuleSymbol;
     public uint SymbolOffset;
 
     public static CodeStream Parse(XmlReader reader)
@@ -76,11 +148,11 @@ class CodeStream
                     break;
 
                 case "module":
-                    Module = reader.ReadElementContentAsString();
+                    ModuleSymbol.Module = reader.ReadElementContentAsString();
                     break;
 
                 case "symbol":
-                    Symbol = reader.ReadElementContentAsString();
+                    ModuleSymbol.Symbol = reader.ReadElementContentAsString();
                     break;
 
                 case "symbol_offset":
@@ -108,14 +180,14 @@ class ThreadExecution
     {
     }
 
-    public static ThreadExecution Parse(XmlReader reader)
+    public static ThreadExecution Parse(XmlReader reader, ref int progress)
     {
         ThreadExecution threadExec = new ThreadExecution();
-        threadExec.ParseInner(reader);
+        threadExec.ParseInner(reader, ref progress);
         return threadExec;
     }
 
-    private void ParseInner(XmlReader reader)
+    private void ParseInner(XmlReader reader, ref int progress)
     {
         reader.ReadStartElement("streams");
         while (reader.IsStartElement())
@@ -125,6 +197,10 @@ class ThreadExecution
                 case "stream":
                     reader.Read();
                     CodeStreams.Add(CodeStream.Parse(reader));
+                    if ((++progress % 1000000) == 0)
+                    {
+                        Console.WriteLine("{0} code streams parsed", progress);
+                    }
                     break;
 
                 default:
@@ -148,15 +224,17 @@ class ExecutionTrace
 
     public static ExecutionTrace LoadFile(string fileName)
     {
+        int progress = 0;
         ExecutionTrace trace = new ExecutionTrace(fileName);
         using (XmlReader reader = XmlReader.Create(fileName))
         {
-            trace.ParseInner(reader);
+            trace.ParseInner(reader, ref progress);
         }
+        Console.WriteLine("{0} code streams read from {1}", progress, fileName);
         return trace;
     }
 
-    private void ParseInner(XmlReader reader)
+    private void ParseInner(XmlReader reader, ref int progress)
     {
         reader.ReadStartElement("threads");
         while (reader.IsStartElement())
@@ -167,7 +245,7 @@ class ExecutionTrace
                     {
                         long.TryParse(reader.GetAttribute("id") ?? "", out long id);
                         reader.Read();
-                        ThreadExecution threadExec = ThreadExecution.Parse(reader);
+                        ThreadExecution threadExec = ThreadExecution.Parse(reader, ref progress);
                         Threads.Add(id, threadExec);
                         break;
                     }
