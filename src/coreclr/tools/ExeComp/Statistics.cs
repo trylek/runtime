@@ -29,8 +29,8 @@ class Statistics
             InstructionMap traceMap = new InstructionMap();
             traceMap.Add(_executionTraces[i]);
             traceMaps[i] = traceMap;
-            moduleHeader.AppendFormat("INSTR/{0,-4} | ", i);
-            symbolHeader.AppendFormat("INSTR/{0,-4} | ", i);
+            moduleHeader.AppendFormat("INSTR/{0,-4} | CALLS/{0,-4} | ", i);
+            symbolHeader.AppendFormat("INSTR/{0,-4} | CALLS/{0,-4} | AVGIC/{0,-4} | ", i);
             foreach (KeyValuePair<string, ModuleInstructionMap> kvpModuleMap in traceMap.Map)
             {
                 moduleToSequenceDelta.TryGetValue(kvpModuleMap.Key, out InstructionSequence moduleInstructions);
@@ -62,8 +62,8 @@ class Statistics
             }
 
         }
-        moduleHeader.AppendFormat("MODULE NAME");
-        symbolHeader.AppendFormat("MODULE / SYMBOL NAME");
+        moduleHeader.AppendFormat("MODULE");
+        symbolHeader.AppendFormat("MODULE!SYMBOL");
         _writer.WriteLine(moduleHeader.ToString());
         _writer.WriteLine(new String('-', moduleHeader.Length));
         foreach (KeyValuePair<string, InstructionSequence> kvpModuleInstructions in moduleToSequenceDelta.Where(m => m.Value.Count != 0).OrderByDescending(m => m.Value.Count))
@@ -73,11 +73,12 @@ class Statistics
             {
                 if (traceMaps[i].Map.TryGetValue(kvpModuleInstructions.Key, out ModuleInstructionMap? moduleMap))
                 {
-                    _writer.Write("{0,10} | ", moduleMap.ModuleInstructions.Count);
+                    int totalCallCount = moduleMap.SymbolCallCountMap.Values.Sum();
+                    _writer.Write("{0,10} | {1,10} | ", moduleMap.ModuleInstructions.Count, totalCallCount);
                 }
                 else
                 {
-                    _writer.Write("<UNUSED>   | ");
+                    _writer.Write("       --- |        --- | ");
                 }
             }
             _writer.WriteLine(kvpModuleInstructions.Key);
@@ -94,11 +95,13 @@ class Statistics
                 if (traceMaps[i].Map.TryGetValue(kvpSymbolInstructions.Key.Module, out ModuleInstructionMap? moduleMap)
                     && moduleMap.SymbolInstructionMap.TryGetValue(kvpSymbolInstructions.Key.Symbol, out InstructionSequence symbolInstructions))
                 {
-                    _writer.Write("{0,10} | ", symbolInstructions.Count);
+                    moduleMap.SymbolCallCountMap.TryGetValue(kvpSymbolInstructions.Key.Symbol, out int callCount);
+                    double averageInstructionCount = symbolInstructions.Count / (double)Math.Max(callCount, 1);
+                    _writer.Write("{0,10} | {1,10} | {2,10:F0} | ", symbolInstructions.Count, callCount, averageInstructionCount);
                 }
                 else
                 {
-                    _writer.Write("<UNUSED>   | ");
+                    _writer.Write("       --- |        --- |        --- | ");
                 }
             }
             _writer.WriteLine(kvpSymbolInstructions.Key.Symbol);

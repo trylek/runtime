@@ -117,6 +117,8 @@ class CodeStream
 {
     public ulong BeginPC;
     public ulong EndPC;
+    public ulong MinPC;
+    public ulong MaxPC;
     public ulong SP;
     public InstructionSequence Instructions;
     public ModuleSymbol ModuleSymbol;
@@ -141,6 +143,14 @@ class CodeStream
 
                 case "end_pc":
                     EndPC = (ulong)reader.ReadElementContentAsLong();
+                    break;
+
+                case "min_pc":
+                    MinPC = (ulong)reader.ReadElementContentAsLong();
+                    break;
+
+                case "max_pc":
+                    MaxPC = (ulong)reader.ReadElementContentAsLong();
                     break;
 
                 case "sp":
