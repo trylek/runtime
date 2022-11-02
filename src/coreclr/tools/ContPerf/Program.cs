@@ -63,9 +63,12 @@ namespace ContPerf
         const string LinuxImageString = "writing image sha256:";
         const string WindowsImageString = "Successfully built ";
         const int WarmupIterations = 2;
-        const int Iterations = 10;
+        const int Iterations = 50;
 
-        static bool UseLinux = true;
+        static bool UseLinux = false;
+        static bool UseReadyToRun = true;
+        static bool UseTieredCompilation = false;
+        static bool UseContainers = true;
 
         private static string[] s_buildModes =
         {
@@ -77,7 +80,8 @@ namespace ContPerf
             "cross-module-inlining",
         };
 
-        static string? s_folderName;
+        static string s_folderName = "";
+        static string s_publishFolderName = "";
 
         static string? s_timestamp;
 
@@ -86,98 +90,87 @@ namespace ContPerf
 
         static int Main(string[] args)
         {
+            foreach (string arg in args)
+            {
+                switch (arg)
+                {
+                    case "LINUX":
+                        UseLinux = true;
+                        break;
+
+                    case "WINDOWS":
+                        UseLinux = false;
+                        break;
+
+                    case "NORTR":
+                        UseReadyToRun = false;
+                        break;
+
+                    case "TIER":
+                        UseTieredCompilation = true;
+                        break;
+
+                    case "NOCONT":
+                        UseContainers = false;
+                        break;
+
+                    default:
+                        throw new Exception($"Unsupported argument '{arg}'");
+                }
+            }
+
+            string rid = (UseLinux ? "linux" : "win") + "-x64";
+
             s_timestamp = DateTime.Now.ToString("MMdd-HHmm");
             s_folderName = Directory.GetCurrentDirectory();
+            s_publishFolderName = Path.Combine(s_folderName, "bin", "Release", "net7.0", rid, "publish");
 
-            string xmlFile;
-            if (args.Length > 0)
+            string buildLogFile = Path.Combine(s_folderName, $"build-{s_timestamp}.log");
+            string execLogFile = Path.Combine(s_folderName, $"run-{s_timestamp}.log");
+
+            Statistics[] results = new Statistics[s_buildModes.Length];
+            int[] jitMethodCounts = new int[s_buildModes.Length];
+
+            using (StreamWriter buildLogWriter = new StreamWriter(buildLogFile))
+            using (StreamWriter execLogWriter = new StreamWriter(execLogFile))
             {
-                xmlFile = args[0];
-            }
-            else
-            {
-                StringBuilder xml = new StringBuilder();
-                xml.AppendLine("<Xml>");
-                string buildLogFile = Path.Combine(s_folderName, $"build-{s_timestamp}.log");
-                string execLogFile = Path.Combine(s_folderName, $"run-{s_timestamp}.log");
-
-                Statistics[] results = new Statistics[s_buildModes.Length];
-
-                using (StreamWriter buildLogWriter = new StreamWriter(buildLogFile))
-                using (StreamWriter execLogWriter = new StreamWriter(execLogFile))
-                {
-                    s_buildLogFile = buildLogWriter;
-                    s_execLogFile = execLogWriter;
-                    for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
-                    {
-                        results[modeIndex] = BuildAndRun(s_buildModes[modeIndex], xml, modeIndex, s_buildModes.Length);
-                    }
-                    s_buildLogFile = null;
-                    s_execLogFile = null;
-                }
-                xml.AppendLine("</Xml>");
-                //Console.WriteLine(new string('=', 70));
-                //Console.WriteLine(xml.ToString());
-                xmlFile = Path.Combine(s_folderName, $"results-{s_timestamp}.xml");
-                File.WriteAllText(xmlFile, xml.ToString());
-
-                Console.WriteLine("   COUNT |     AVG% |      AVG |      MIN |      MAX |   STDDEV | MODE");
-                Console.WriteLine("----------------------------------------------------------------------");
+                s_buildLogFile = buildLogWriter;
+                s_execLogFile = execLogWriter;
                 for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
                 {
-                    Statistics result = results[modeIndex];
-                    long averagePercentage = (result.Average * 100L / Math.Max(results[0].Average, 1));
-                    Console.WriteLine("{0,8} | {1,8} | {2,8} | {3,8} | {4,8} | {5,8} | {6}",
-                        result.Count,
-                        averagePercentage,
-                        result.Average,
-                        result.Minimum,
-                        result.Maximum,
-                        result.StandardDeviation,
-                        s_buildModes[modeIndex]);
+                    BuildAndRun(s_buildModes[modeIndex], modeIndex, s_buildModes.Length, out results[modeIndex], out jitMethodCounts[modeIndex]);
                 }
+                s_buildLogFile = null;
+                s_execLogFile = null;
             }
 
-            /*
-            string resultsFile = Path.ChangeExtension(xmlFile, "results.txt");
-            ProcessXmlFile(xmlFile, resultsFile);
-            */
+            Console.WriteLine("   COUNT |     AVG% |      AVG |      JIT | MODE");
+            Console.WriteLine("------------------------------------------------");
+            for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
+            {
+                Statistics result = results[modeIndex];
+                long averagePercentage = (result.Average * 100L / Math.Max(results[0].Average, 1));
+                Console.WriteLine("{0,8} | {1,8} | {2,8} | {3,8} | {4}",
+                    result.Count,
+                    averagePercentage,
+                    result.Average,
+                    jitMethodCounts[modeIndex],
+                    s_buildModes[modeIndex]);
+            }
+
             return 0;
         }
 
-        private static Statistics BuildAndRun(in string buildMode, StringBuilder xml, int index, int count)
+        private static void BuildAndRun(in string buildMode, int index, int count, out Statistics stat, out int jitMethodCount)
         {
             string? image = Build(buildMode, index, count);
             if (image == null)
             {
-                return new Statistics();
+                stat = new Statistics();
+                jitMethodCount = 0;
+                return;
             }
-            return Run(buildMode, image, xml, useTieredCompilation: false, useReadyToRun: true);
-            /*
-            xml.AppendFormat("<BuildAndRun Name=\"{0}\">\n", buildMode.Name);
-            xml.AppendFormat("<NetCoreComposite>{0}</NetCoreComposite>\n", buildMode.NetCoreComposite);
-            xml.AppendFormat("<NetCoreIncludeAspNet>{0}</NetCoreIncludeAspNet>\n", buildMode.NetCoreIncludeAspNet);
-            xml.AppendFormat("<AspNetComposite>{0}</AspNetComposite>\n", buildMode.AspNetComposite);
-            xml.AppendFormat("<AppR2R>{0}</AppR2R>\n", buildMode.AppR2R);
-            xml.AppendFormat("<AppComposite>{0}</AppComposite>\n", buildMode.AppComposite);
-            xml.AppendFormat("<OneBigComposite>{0}</OneBigComposite>\n", buildMode.OneBigComposite);
-            xml.AppendFormat("<CrossModuleInlining>{0}</CrossModuleInlining>\n", buildMode.CrossModuleInlining);
-            xml.AppendFormat("<AppAVX2>{0}</AppAVX2>\n", buildMode.AppAVX2);
-            xml.AppendFormat("<UseTieredCompilation>{0}</UseTieredCompilation>\n", buildMode.UseTieredCompilation);
-            xml.AppendFormat("<UseReadyToRun>{0}</UseReadyToRun>\n", buildMode.UseReadyToRun);
-            xml.AppendLine("<Results>");
-            StringBuilder warmupBuilder = new StringBuilder();
-            for (int warmupIteration = 0; Iterations < WarmupIterations; warmupIteration++)
-            {
-                Run(buildMode, image, warmupBuilder);
-            }
-            for (int iteration = 0; iteration < Iterations; iteration++)
-            {
-                Run(buildMode, image, xml);
-            }
-            xml.AppendLine("</Results>");
-            xml.AppendLine("</BuildAndRun>");
-            */
+            Run(buildMode, image, useTieredCompilation: UseTieredCompilation, useReadyToRun: UseReadyToRun, out stat, out jitMethodCount);
         }
 
         private static string? Build(in string buildMode, int index, int total)
@@ -185,28 +178,29 @@ namespace ContPerf
             Stopwatch sw = Stopwatch.StartNew();
             Console.WriteLine("Building configuration: {0} ({1} / {2})", buildMode, index, total);
 
+            StringBuilder buildArgs = new StringBuilder();
+            buildArgs.Append(UseLinux ? "linux" : "win");
+            buildArgs.Append(' ');
+            buildArgs.Append(buildMode);
+
             ProcessStartInfo psiBuildCmd = new ProcessStartInfo()
             {
                 FileName = Path.Combine(s_folderName!, "build.cmd"),
-                Arguments = (UseLinux ? "linux" : "win") + " " + buildMode,
+                Arguments = buildArgs.ToString(),
                 UseShellExecute = false,
             };
-            /*
-            psiBuildCmd.Environment["NETCORE_COMPOSITE"] = buildMode.NetCoreComposite ? "1" : "0";
-            psiBuildCmd.Environment["NETCORE_INCLUDE_ASPNET"] = buildMode.NetCoreIncludeAspNet ? "1" : "0";
-            psiBuildCmd.Environment["ASPNET_COMPOSITE"] = buildMode.AspNetComposite ? "1" : "0";
-            psiBuildCmd.Environment["APP_R2R"] = buildMode.AppR2R ? "1" : "0";
-            psiBuildCmd.Environment["APP_COMPOSITE"] = buildMode.AppComposite ? "1" : "0";
-            psiBuildCmd.Environment["ONE_BIG_COMPOSITE"] = buildMode.OneBigComposite ? "1" : "0";
-            psiBuildCmd.Environment["CROSS_MODULE_INLINING"] = buildMode.CrossModuleInlining ? "1" : "0";
-            psiBuildCmd.Environment["APP_AVX2"] = buildMode.AppAVX2 ? "1" : "0";
-            */
+            psiBuildCmd.Environment["UseContainers"] = UseContainers ? "1" : "0";
 
             int exitCode = RunProcess(psiBuildCmd, s_buildLogFile!, out List<string> stdout);
 
             string? imageId = null;
             if (exitCode == 0)
             {
+                if (!UseContainers)
+                {
+                    return "";
+                }
+
                 for (int i = stdout.Count - 1; i >= 0 && i >= stdout.Count - 10; i--)
                 {
                     string line = stdout[i];
@@ -243,36 +237,119 @@ namespace ContPerf
             */
         }
 
-        private static Statistics Run(string buildMode, string dockerImageId, StringBuilder xml, bool useTieredCompilation, bool useReadyToRun)
+        private static int Execute(
+            string dockerImageId,
+            bool collectMethods,
+            bool useTieredCompilation,
+            bool useReadyToRun,
+            TextWriter logFile,
+            out List<string> stdout)
         {
-            StringBuilder commandLine = new StringBuilder();
-            commandLine.Append("run");
-            commandLine.AppendFormat(" --env COMPlus_TieredCompilation={0}", useTieredCompilation ? "1" : "0");
-            // commandLine.AppendFormat(" --env COMPlus_ReadyToRun={0}", useReadyToRun ? "1" : "0");
-            commandLine.AppendFormat(" -it {0}", dockerImageId);
-            if (UseLinux)
+            List<KeyValuePair<string, string>> environment = new List<KeyValuePair<string, string>>();
+            environment.Add(new KeyValuePair<string, string>("DOTNET_TieredCompilation", useTieredCompilation ? "1" : "0"));
+            if (collectMethods)
             {
-                commandLine.Append(" /app/runapp.sh");
+                environment.Add(new KeyValuePair<string, string>("DOTNET_JitDisasmSummary", "1"));
+                environment.Add(new KeyValuePair<string, string>("TotalIterations", "1"));
             }
             else
             {
-                commandLine.Append(" c:\\app\\runapp.cmd");
+                environment.Add(new KeyValuePair<string, string>("TotalIterations", Iterations.ToString()));
             }
+            environment.Add(new KeyValuePair<string, string>("DOTNET_ReadyToRun", UseReadyToRun ? "1" : "0"));
 
+            string runScriptName = "runapp." + (UseLinux ? "sh" : "cmd");
+            string application;
+            StringBuilder commandLine = new StringBuilder();
+            if (UseContainers)
+            {
+                application = "docker";
+                commandLine.Append("run");
+                foreach (KeyValuePair<string, string> kvpEnv in environment)
+                {
+                    commandLine.Append(" --env ");
+                    commandLine.Append(kvpEnv.Key);
+                    commandLine.Append("=");
+                    commandLine.Append(kvpEnv.Value);
+                }
+
+                if (UseLinux)
+                {
+                    commandLine.Append(" /app/");
+                }
+                else
+                {
+                    commandLine.Append(" c:\\app\\");
+                }
+                commandLine.Append(runScriptName);
+            }
+            else
+            {
+                application = Path.Combine(s_publishFolderName, runScriptName);
+            }
             ProcessStartInfo psi = new ProcessStartInfo()
             {
-                FileName = "docker",
+                FileName = application,
                 Arguments = commandLine.ToString(),
                 UseShellExecute = false,
             };
-            // psi.EnvironmentVariables.Add("COMPlus_TieredCompilation", buildMode.UseTieredCompilation ? "1" : "0");
-            // psi.EnvironmentVariables.Add("COMPlus_ReadyToRun", buildMode.UseReadyToRun ? "1" : "0");
+            if (!UseContainers)
+            {
+                foreach (KeyValuePair<string, string> kvpEnv in environment)
+                {
+                    psi.Environment[kvpEnv.Key] = kvpEnv.Value;
+                }
+            }
+            return RunProcess(psi, logFile, out stdout);
+        }
 
-            int exitCode = RunProcess(psi, s_execLogFile!, out List<string> stdout);
+        private static void Run(string buildMode, string dockerImageId, bool useTieredCompilation, bool useReadyToRun,
+            out Statistics stat, out int jitMethodCount)
+        {
+            jitMethodCount = 0;
+            stat = new Statistics();
+
+            int exitCode;
+            List<string> stdout;
+
+            exitCode = Execute(dockerImageId, collectMethods: true, useTieredCompilation: useTieredCompilation, useReadyToRun: useReadyToRun,
+                s_execLogFile!, out stdout);
             if (exitCode != 0)
             {
-                return new Statistics();
+                return;
             }
+
+            for (int lineIndex = 0; lineIndex < stdout.Count; lineIndex++)
+            {
+                string line = stdout[lineIndex];
+                int jitIndex = line.IndexOf(": JIT compiled");
+                if (jitIndex > 0)
+                {
+                    while (jitIndex > 0 && line[jitIndex - 1] < ' ')
+                    {
+                        jitIndex--;
+                    }
+                    int numberEnd = jitIndex;
+                    while (jitIndex > 0 && Char.IsDigit(line[jitIndex - 1]))
+                    {
+                        jitIndex--;
+                    }
+                    int numberBegin = jitIndex;
+                    if (int.TryParse(line.AsSpan(numberBegin, numberEnd - numberBegin), out int methodIndex))
+                    {
+                        jitMethodCount = Math.Max(jitMethodCount, methodIndex);
+                    }
+                }
+            }
+
+            exitCode = Execute(dockerImageId, collectMethods: false, useTieredCompilation: useTieredCompilation, useReadyToRun: useReadyToRun,
+                s_execLogFile!,
+                out stdout);
+            if (exitCode != 0)
+            {
+                return;
+            }
+
             List<long> usecDurations = new List<long>();
             for (int lineIndex = 0; lineIndex < stdout.Count; lineIndex++)
             {
@@ -289,7 +366,7 @@ namespace ContPerf
                         if (valueEnd > iterationEnd)
                         {
                             int iteration = int.Parse(line.AsSpan(start, iterationEnd - start));
-                            if (iteration > usecDurations.Count)
+                            if (iteration >= usecDurations.Count)
                             {
                                 long duration = long.Parse(line.AsSpan(iterationEnd + 1, valueEnd - iterationEnd - 1));
                                 usecDurations.Add(duration);
@@ -298,13 +375,13 @@ namespace ContPerf
                     }
                 }
             }
-            Statistics stat = new Statistics(usecDurations);
+            stat = new Statistics(usecDurations);
+            Console.WriteLine("JITTED:  {0}", jitMethodCount);
             Console.WriteLine("COUNT:   {0}", stat.Count);
             Console.WriteLine("AVERAGE: {0}", stat.Average);
             Console.WriteLine("MINIMUM: {0}", stat.Minimum);
             Console.WriteLine("MAXIMUM: {0}", stat.Maximum);
             Console.WriteLine("STDDEV:  {0}", stat.StandardDeviation);
-            return stat;
         }
 
         private static int RunProcess(ProcessStartInfo psi, TextWriter logFile, out List<string> stdout)
