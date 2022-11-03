@@ -1,3 +1,6 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -9,13 +12,13 @@ using System.Xml;
 
 namespace ContPerf
 {
-    class Statistics
+    public class Statistics
     {
-        private long _count = 0;
-        private long _sum = 0;
-        private long _sumSquared = 0;
+        private long _count;
+        private long _sum;
+        private long _sumSquared;
         private long _minimum = long.MaxValue;
-        private long _maximum = 0;
+        private long _maximum;
 
         public long Count => _count;
         private long SafeCountDenominator => Math.Max(_count, 1);
@@ -58,17 +61,17 @@ namespace ContPerf
         }
     }
 
-    class Program
+    public sealed class Program
     {
-        const string LinuxImageString = "writing image sha256:";
-        const string WindowsImageString = "Successfully built ";
-        const int WarmupIterations = 2;
-        const int Iterations = 50;
+        private const string LinuxImageString = "writing image sha256:";
+        private const string WindowsImageString = "Successfully built ";
+        // private const int WarmupIterations = 2;
+        private const int Iterations = 50;
 
-        static bool UseLinux = false;
-        static bool UseReadyToRun = true;
-        static bool UseTieredCompilation = false;
-        static bool UseContainers = true;
+        private static bool UseLinux;
+        private static bool UseReadyToRun = true;
+        private static bool UseTieredCompilation;
+        private static bool UseContainers = true;
 
         private static string[] s_buildModes =
         {
@@ -80,15 +83,15 @@ namespace ContPerf
             "cross-module-inlining",
         };
 
-        static string s_folderName = "";
-        static string s_publishFolderName = "";
+        private static string s_folderName = "";
+        private static string s_publishFolderName = "";
 
-        static string? s_timestamp;
+        private static string? s_timestamp;
 
-        static TextWriter? s_buildLogFile;
-        static TextWriter? s_execLogFile;
+        private static TextWriter? s_buildLogFile;
+        private static TextWriter? s_execLogFile;
 
-        static int Main(string[] args)
+        public static int Main(string[] args)
         {
             foreach (string arg in args)
             {
@@ -265,13 +268,16 @@ namespace ContPerf
             {
                 application = "docker";
                 commandLine.Append("run");
+
                 foreach (KeyValuePair<string, string> kvpEnv in environment)
                 {
                     commandLine.Append(" --env ");
                     commandLine.Append(kvpEnv.Key);
-                    commandLine.Append("=");
+                    commandLine.Append('=');
                     commandLine.Append(kvpEnv.Value);
                 }
+
+                commandLine.AppendFormat(" -it {0}", dockerImageId);
 
                 if (UseLinux)
                 {
@@ -330,7 +336,7 @@ namespace ContPerf
                         jitIndex--;
                     }
                     int numberEnd = jitIndex;
-                    while (jitIndex > 0 && Char.IsDigit(line[jitIndex - 1]))
+                    while (jitIndex > 0 && char.IsDigit(line[jitIndex - 1]))
                     {
                         jitIndex--;
                     }

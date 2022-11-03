@@ -1,19 +1,22 @@
-﻿using System.Diagnostics;
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+using System.Diagnostics;
 using System.Text;
 
 namespace runcg2
 {
-    internal class Program
+    public sealed class Program
     {
-        private int _failureCount = 0;
-        private int _successCount = 0;
+        private int _failureCount;
+        private int _successCount;
 
         private string _folder = "";
         private string _app = "";
         private string _cg2Folder = "";
         private string _commonArguments = "";
 
-        static int Main(string[] args)
+        public static int Main(string[] args)
         {
             return new Program().TryMain(args);
         }
