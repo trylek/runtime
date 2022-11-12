@@ -34,7 +34,7 @@ namespace ILTransform
         };
 
         // Add 'linesToAdd' to 'lines' at index 'index' with indentation copied from 'modelLine'
-	// Returns index of lines after the inserted lines
+        // Returns index of lines after the inserted lines
         private static int InsertIndentedLines(List<string> lines, int index, string[] linesToAdd, string modelLine)
         {
             int indent = TestProject.GetIndent(modelLine);
@@ -45,7 +45,7 @@ namespace ILTransform
                 indentedLinesToAdd[i] = indentString + linesToAdd[i];
             }
             lines.InsertRange(index, indentedLinesToAdd);
-	    return index + linesToAdd.Length;
+            return index + linesToAdd.Length;
         }
 
         private readonly TestProject _testProject;
