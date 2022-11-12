@@ -75,12 +75,32 @@ namespace ILTransform
         public readonly int LastUsingLine;
         public readonly int NamespaceLine;
         public readonly bool HasFactAttribute;
+        public readonly bool IsFake;
         public readonly Dictionary<string, string> AllProperties;
+
         public readonly bool IsILProject;
 
         public string? TestProjectAlias;
         public string? DeduplicatedClassName;
         public string? DeduplicatedNamespaceName;
+
+        // A fake TestProject used to cause duplicate logic to fire
+        public TestProject(string testClassName)
+            : this(absolutePath: "fake",
+                relativePath: "fake",
+                allProperties: new Dictionary<string, string>() { ["DebugType"] = "*", ["Optimize"] = "*" },
+                compileFiles: new string[0],
+                projectReferences: new string[0],
+                testClassName: testClassName,
+                testClassBases: new string[0],
+                testClassNamespace: "fake",
+                testClassSourceFile: "fake",
+                testClassLine: -1,
+                mainMethodLine: -1,
+                lastUsingLine: -1,
+                namespaceLine: -1,
+                hasFactAttribute: false,
+                isFake : true) {}
 
         public TestProject(
             string absolutePath,
@@ -96,7 +116,8 @@ namespace ILTransform
             int mainMethodLine,
             int lastUsingLine,
             int namespaceLine,
-            bool hasFactAttribute)
+            bool hasFactAttribute,
+            bool isFake = false)
         {
             AbsolutePath = absolutePath;
             RelativePath = relativePath;
@@ -104,7 +125,7 @@ namespace ILTransform
 
             OutputType = GetProperty("OutputType");
             CLRTestKind = GetProperty("CLRTestKind");
-            CLRTestProjectToRun = SanitizeFileName(GetProperty("CLRTestProjectToRun"), AbsolutePath);
+            CLRTestProjectToRun = isFake ? "" : SanitizeFileName(GetProperty("CLRTestProjectToRun"), AbsolutePath);
             CLRTestExecutionArguments = GetProperty("CLRTestExecutionArguments");
             string debugType = InitCaps(GetProperty("DebugType"));
             string optimize = InitCaps(GetProperty("Optimize"));
@@ -126,6 +147,7 @@ namespace ILTransform
             LastUsingLine = lastUsingLine;
             NamespaceLine = namespaceLine;
             HasFactAttribute = hasFactAttribute;
+            IsFake = isFake;
 
             IsILProject = Path.GetExtension(RelativePath).ToLower() == ".ilproj";
         }
@@ -454,6 +476,25 @@ namespace ILTransform
             _classNameMap = new Dictionary<string, List<TestProject>>();
             _namespaceNameMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
             _rewrittenFiles = new HashSet<string>();
+        }
+
+        public void AddCommonClassName(string className)
+        {
+            AddToMultiMap(_classNameMap, className, new TestProject(className));
+        }
+
+        private void AddToMultiMap<TKey>(
+            Dictionary<TKey, List<TestProject>> multiMap,
+            TKey key,
+            TestProject project)
+            where TKey : notnull
+        {
+            if (!multiMap.TryGetValue(key, out List<TestProject>? projectList))
+            {
+                projectList = new List<TestProject>();
+                multiMap.Add(key, projectList);
+            }
+            projectList!.Add(project);
         }
 
         public void ScanTree(string rootPath)
@@ -854,7 +895,7 @@ namespace ILTransform
             writer.WriteLine();
         }
 
-        public void RewriteAllTests(bool deduplicateClassNames, string classToDeduplicate, bool addILFactAttributes, bool cleanupILModuleAssembly)
+        public void RewriteAllTests(bool deduplicateClassNames, string classToDeduplicate, bool addProcessIsolation, bool addILFactAttributes, bool cleanupILModuleAssembly)
         {
             HashSet<string> classNameDuplicates = new HashSet<string>(_classNameMap.Where(kvp => kvp.Value.Count > 1).Select(kvp => kvp.Key));
 
@@ -865,7 +906,14 @@ namespace ILTransform
                 {
                     continue;
                 }
-                new ILRewriter(project, classNameDuplicates, deduplicateClassNames, _rewrittenFiles, addILFactAttributes, cleanupILModuleAssembly).Rewrite();
+                new ILRewriter(
+                    project,
+                    classNameDuplicates,
+                    deduplicateClassNames,
+                    _rewrittenFiles,
+                    addProcessIsolation: addProcessIsolation,
+                    addILFactAttributes: addILFactAttributes,
+                    cleanupILModuleAssembly: cleanupILModuleAssembly).Rewrite();
                 index++;
                 if (index % 500 == 0)
                 {
@@ -1738,12 +1786,7 @@ namespace ILTransform
                     Console.WriteLine("Project: {0}", project.AbsolutePath);
                 }
 
-                if (!_classNameMap.TryGetValue(project.TestClassName, out List<TestProject>? projectList))
-                {
-                    projectList = new List<TestProject>();
-                    _classNameMap.Add(project.TestClassName, projectList);
-                }
-                projectList!.Add(project);
+                AddToMultiMap(_classNameMap, project.TestClassName, project);
 
                 if (project.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum"))
                 {
@@ -1756,12 +1799,7 @@ namespace ILTransform
                     debugOptProjectMap = new Dictionary<DebugOptimize, List<TestProject>>();
                     _namespaceNameMap.Add(namespaceClass, debugOptProjectMap);
                 }
-                if (!debugOptProjectMap!.TryGetValue(project.DebugOptimize, out projectList))
-                {
-                    projectList = new List<TestProject>();
-                    debugOptProjectMap!.Add(project.DebugOptimize, projectList);
-                }
-                projectList!.Add(project);
+                AddToMultiMap(debugOptProjectMap, project.DebugOptimize, project);
 
                 foreach (string file in project.CompileFiles)
                 {
@@ -1778,14 +1816,18 @@ namespace ILTransform
 
             foreach (List<TestProject> projectList in _classNameMap.Values.Where(v => v.Count > 1))
             {
-                Dictionary<DebugOptimize, int> counts = new Dictionary<DebugOptimize, int>();
+                var found = new HashSet<DebugOptimize>();
+                bool doDedup = false;
                 foreach (TestProject project in projectList)
                 {
-                    counts.TryGetValue(project.DebugOptimize, out int count);
-                    counts[project.DebugOptimize] = count + 1;
+                    if (project.DebugOptimize.Debug == "*" || !found.Add(project.DebugOptimize))
+                    {
+                       doDedup = true;
+                       break;
+                    }
                 }
 
-                if (counts.Values.Any(c => c > 1))
+                if (doDedup)
                 {
                     foreach (TestProject project in projectList)
                     {

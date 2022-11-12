@@ -17,8 +17,9 @@ namespace ILTransform
                 string classToDeduplicate = "";
                 bool fixImplicitSharedLibraries = false;
                 bool addILFactAttributes = false;
+                bool addProcessIsolation = false;
                 bool unifyDbgRelProjects = false;
-                bool cleanUpILModuleAssembly = false;
+                bool cleanupILModuleAssembly = false;
                 foreach (string arg in args)
                 {
                     if (arg[0] == '-')
@@ -44,13 +45,17 @@ namespace ILTransform
                         {
                             addILFactAttributes = true;
                         }
+                        else if (arg.StartsWith("-s"))
+                        {
+                            addProcessIsolation = true;
+                        }
                         else if (arg.StartsWith("-p"))
                         {
                             unifyDbgRelProjects = true;
                         }
                         else if (arg.StartsWith("-m"))
                         {
-                            cleanUpILModuleAssembly = true;
+                            cleanupILModuleAssembly = true;
                         }
                         else if (arg.StartsWith("-n"))
                         {
@@ -82,6 +87,7 @@ namespace ILTransform
                 }
 
                 TestProjectStore testStore = new TestProjectStore();
+                testStore.AddCommonClassName("My");
                 testStore.ScanTree(testRoot);
                 testStore.GenerateExternAliases();
 
@@ -113,8 +119,13 @@ namespace ILTransform
                 }
                 else
                 {
-                    testStore.RewriteAllTests(deduplicateClassNames, classToDeduplicate, addILFactAttributes, cleanUpILModuleAssembly);
-                    if (!deduplicateClassNames && !addILFactAttributes)
+                    testStore.RewriteAllTests(
+                        deduplicateClassNames,
+                        classToDeduplicate,
+                        addProcessIsolation: addProcessIsolation,
+                        addILFactAttributes: addILFactAttributes,
+                        cleanupILModuleAssembly: cleanupILModuleAssembly);
+                    if (!deduplicateClassNames && !addProcessIsolation && !addILFactAttributes)
                     {
                         testStore.GenerateAllWrappers(wrapperRoot);
                     }

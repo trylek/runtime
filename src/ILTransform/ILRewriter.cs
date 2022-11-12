@@ -23,10 +23,36 @@ namespace ILTransform
             ")",
         };
 
+        private static string[] s_csFactLines =
+        {
+            "[Fact]",
+        };
+
+        private static string[] s_processIsolationLines =
+        {
+            "<RequiresProcessIsolation>true</RequiresProcessIsolation>",
+        };
+
+        // Add 'linesToAdd' to 'lines' at index 'index' with indentation copied from 'modelLine'
+	// Returns index of lines after the inserted lines
+        private static int InsertIndentedLines(List<string> lines, int index, string[] linesToAdd, string modelLine)
+        {
+            int indent = TestProject.GetIndent(modelLine);
+            string indentString = modelLine.Substring(0, indent);
+            string[] indentedLinesToAdd = new string[linesToAdd.Length];
+            for (int i = 0; i < linesToAdd.Length; i++)
+            {
+                indentedLinesToAdd[i] = indentString + linesToAdd[i];
+            }
+            lines.InsertRange(index, indentedLinesToAdd);
+	    return index + linesToAdd.Length;
+        }
+
         private readonly TestProject _testProject;
         private readonly HashSet<string> _classNameDuplicates;
         private readonly bool _deduplicateClassNames;
         private readonly HashSet<string> _rewrittenFiles;
+        private readonly bool _addProcessIsolation;
         private readonly bool _addILFactAttributes;
         private readonly bool _cleanupILModuleAssembly;
 
@@ -35,6 +61,7 @@ namespace ILTransform
             HashSet<string> classNameDuplicates,
             bool deduplicateClassNames,
             HashSet<string> rewrittenFiles,
+            bool addProcessIsolation,
             bool addILFactAttributes,
             bool cleanupILModuleAssembly)
         {
@@ -42,6 +69,7 @@ namespace ILTransform
             _classNameDuplicates = classNameDuplicates;
             _deduplicateClassNames = deduplicateClassNames;
             _rewrittenFiles = rewrittenFiles;
+            _addProcessIsolation = addProcessIsolation;
             _addILFactAttributes = addILFactAttributes;
             _cleanupILModuleAssembly = cleanupILModuleAssembly;
         }
@@ -100,17 +128,12 @@ namespace ILTransform
                         string indentString = firstMainBodyLine.Substring(0, indent);
                         if (isILTest)
                         {
-                            string[] indentedFactLines = new string[s_factLines.Length];
-                            for (int i = 0; i < s_factLines.Length; i++)
-                            {
-                                indentedFactLines[i] = indentString + s_factLines[i];
-                            }
-                            lines.InsertRange(lineInBody + 1, indentedFactLines);
+                            InsertIndentedLines(lines, lineInBody + 1, s_factLines, firstMainBodyLine);
                         }
                         else
                         {
                             lines[lineIndex] = ReplaceIdent(line, "Main", "TestEntryPoint");
-                            lines.Insert(lineIndex++, indentString + "[Fact]");
+                            lineIndex = InsertIndentedLines(lines, lineIndex, s_csFactLines, firstMainBodyLine);
                             rewritten = true;
                         }
                     }
@@ -450,7 +473,6 @@ namespace ILTransform
                 }
             }
 
-            /*
             if (_testProject.DeduplicatedClassName != null)
             {
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
@@ -459,7 +481,6 @@ namespace ILTransform
                 }
                 rewritten = true;
             }
-            */
 
             if (rewritten)
             {
@@ -482,6 +503,19 @@ namespace ILTransform
                     rewritten = true;
                     continue;
                 }
+
+                // Assume that any CLRTestTargetUnsupported annotation is relevant
+                // (that we're not seeing something like
+                // <CLRTestTargetUnsupported>false</CLRTestTargetUnsupported>)
+                const string unsupportedTag = "<CLRTestTargetUnsupported";
+                bool containsUnsupportedTag = line.Contains(unsupportedTag);
+                if (_addProcessIsolation && containsUnsupportedTag)
+                {
+                    lineIndex = InsertIndentedLines(lines, lineIndex, s_processIsolationLines, line);
+                    rewritten = true;
+                    continue;
+                }
+
                 /*
                 const string testKindTag = "<CLRTestKind>BuildAndRun</CLRTestKind>";
                 int testKindIndex = line.IndexOf(testKindTag);
