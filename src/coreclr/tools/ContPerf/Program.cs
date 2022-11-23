@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime;
 using System.Text;
 using System.Xml;
@@ -179,7 +180,7 @@ namespace ContPerf
         private static string? Build(in string buildMode, int index, int total)
         {
             Stopwatch sw = Stopwatch.StartNew();
-            Console.WriteLine("Building configuration: {0} ({1} / {2})", buildMode, index, total);
+            s_buildLogFile!.WriteLine("Building configuration: {0} ({1} / {2})", buildMode, index, total);
 
             StringBuilder buildArgs = new StringBuilder();
             buildArgs.Append(UseLinux ? "linux" : "win");
@@ -226,7 +227,7 @@ namespace ContPerf
                     }
                 }
             }
-            Console.WriteLine("Done building configuration: {0} ({1} / {2}, {3} msecs)", buildMode, index, total, sw.ElapsedMilliseconds);
+            s_buildLogFile!.WriteLine("Done building configuration: {0} ({1} / {2}, {3} msecs)", buildMode, index, total, sw.ElapsedMilliseconds);
             return imageId;
 
             /*
@@ -312,6 +313,8 @@ namespace ContPerf
         private static void Run(string buildMode, string dockerImageId, bool useTieredCompilation, bool useReadyToRun,
             out Statistics stat, out int jitMethodCount)
         {
+            s_execLogFile!.WriteLine("Running configuration: {0}", buildMode);
+
             jitMethodCount = 0;
             stat = new Statistics();
 
@@ -382,17 +385,17 @@ namespace ContPerf
                 }
             }
             stat = new Statistics(usecDurations);
-            Console.WriteLine("JITTED:  {0}", jitMethodCount);
-            Console.WriteLine("COUNT:   {0}", stat.Count);
-            Console.WriteLine("AVERAGE: {0}", stat.Average);
-            Console.WriteLine("MINIMUM: {0}", stat.Minimum);
-            Console.WriteLine("MAXIMUM: {0}", stat.Maximum);
-            Console.WriteLine("STDDEV:  {0}", stat.StandardDeviation);
+            s_execLogFile!.WriteLine("JITTED:  {0}", jitMethodCount);
+            s_execLogFile!.WriteLine("COUNT:   {0}", stat.Count);
+            s_execLogFile!.WriteLine("AVERAGE: {0}", stat.Average);
+            s_execLogFile!.WriteLine("MINIMUM: {0}", stat.Minimum);
+            s_execLogFile!.WriteLine("MAXIMUM: {0}", stat.Maximum);
+            s_execLogFile!.WriteLine("STDDEV:  {0}", stat.StandardDeviation);
         }
 
         private static int RunProcess(ProcessStartInfo psi, TextWriter logFile, out List<string> stdout)
         {
-            Console.WriteLine("RunProcess: {0} {1}", psi.FileName, psi.Arguments);
+            logFile.WriteLine("RunProcess: {0} {1}", psi.FileName, psi.Arguments);
 
             Stopwatch sw = Stopwatch.StartNew();
 

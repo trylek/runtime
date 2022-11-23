@@ -15,6 +15,7 @@ namespace runcg2
         private string _app = "";
         private string _cg2Folder = "";
         private string _commonArguments = "";
+        private HashSet<string> _compositeAssemblies = new HashSet<string>();
 
         public static int Main(string[] args)
         {
@@ -24,9 +25,10 @@ namespace runcg2
         private int TryMain(string[] args)
         {
             _folder = args[0];
-            _app = args[1];
+            _compositeAssemblies = LoadCompositeAssemblies(args[1]);
+            _app = args[2];
             StringBuilder arguments = new StringBuilder();
-            for (int argIndex = 2; argIndex < args.Length; argIndex++)
+            for (int argIndex = 3; argIndex < args.Length; argIndex++)
             {
                 string arg = args[argIndex];
                 if (arguments.Length > 0)
@@ -55,9 +57,23 @@ namespace runcg2
             }
 
             List<KeyValuePair<string, long>> dllSizes = new List<KeyValuePair<string, long>>();
+            List<string> compositeFiles = new List<string>();
             foreach (string dll in Directory.EnumerateFiles(_folder, "*.dll"))
             {
-                dllSizes.Add(new KeyValuePair<string, long>(dll, new FileInfo(dll).Length));
+                string simpleName = Path.GetFileNameWithoutExtension(dll);
+                if (_compositeAssemblies.Contains(simpleName))
+                {
+                    compositeFiles.Add(dll);
+                }
+                else
+                {
+                    dllSizes.Add(new KeyValuePair<string, long>(dll, new FileInfo(dll).Length));
+                }
+            }
+
+            if (compositeFiles.Count > 0)
+            {
+                CompileComposite(compositeFiles);
             }
 
             Parallel.ForEach(dllSizes.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key), CompileFile);
@@ -73,6 +89,16 @@ namespace runcg2
             return _failureCount == 0 ? 0 : 1;
         }
 
+        private static HashSet<string> LoadCompositeAssemblies(string path)
+        {
+            HashSet<string> result = new HashSet<string>();
+            if (!string.IsNullOrEmpty(path))
+            {
+                result.UnionWith(File.ReadAllLines(path));
+            }
+            return result;
+        }
+
         private void CompileFile(string dll)
         {
             string output = Path.Combine(_cg2Folder, Path.GetFileName(dll));
@@ -81,7 +107,7 @@ namespace runcg2
             fileArgs += " -O";
             fileArgs += " " + dll;
             fileArgs += $" -r:{_folder}\\*.dll";
-            fileArgs += " --pdb";
+            // fileArgs += " --pdb";
 
             ProcessStartInfo psi = new ProcessStartInfo()
             {
@@ -102,7 +128,41 @@ namespace runcg2
                     Interlocked.Increment(ref _successCount);
                 }
             }
+        }
 
+        private void CompileComposite(IEnumerable<string> files)
+        {
+            string compositeName = "composite." + Path.GetFileNameWithoutExtension(files.First()) + ".dll";
+            string output = Path.Combine(_cg2Folder, compositeName);
+            string fileArgs = _commonArguments;
+            fileArgs += " --composite";
+            fileArgs += " -o:" + output;
+            fileArgs += " -O";
+            foreach (string dll in files)
+            {
+                fileArgs += " " + dll;
+            }
+            fileArgs += $" -r:{_folder}\\*.dll";
+
+            ProcessStartInfo psi = new ProcessStartInfo()
+            {
+                FileName = _app,
+                Arguments = fileArgs,
+            };
+
+            using (Process cg2Process = Process.Start(psi)!)
+            {
+                cg2Process.WaitForExit();
+                if (cg2Process.ExitCode != 0)
+                {
+                    Console.Error.WriteLine("Error compiling composite image '{0}'", output);
+                    Interlocked.Increment(ref _failureCount);
+                }
+                else
+                {
+                    Interlocked.Increment(ref _successCount);
+                }
+            }
         }
     }
 }
