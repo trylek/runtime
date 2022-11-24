@@ -66,13 +66,19 @@ namespace ContPerf
     {
         private const string LinuxImageString = "writing image sha256:";
         private const string WindowsImageString = "Successfully built ";
+        private const string R2RLengthString = "### R2R-length: ";
         // private const int WarmupIterations = 2;
-        private const int Iterations = 50;
+        private const int Iterations = 500;
 
         private static bool UseLinux;
         private static bool UseReadyToRun = true;
         private static bool UseTieredCompilation;
         private static bool UseContainers = true;
+        private static bool UsePartialComposite;
+
+        private static bool NextArgIsCompositeFileList;
+
+        private static string? s_compositeFileList;
 
         private static string[] s_buildModes =
         {
@@ -96,6 +102,13 @@ namespace ContPerf
         {
             foreach (string arg in args)
             {
+                if (NextArgIsCompositeFileList)
+                {
+                    s_compositeFileList = arg;
+                    NextArgIsCompositeFileList = false;
+                    continue;
+                }
+
                 switch (arg)
                 {
                     case "LINUX":
@@ -116,6 +129,11 @@ namespace ContPerf
 
                     case "NOCONT":
                         UseContainers = false;
+                        break;
+
+                    case "PARTIAL":
+                        UsePartialComposite = true;
+                        NextArgIsCompositeFileList = true;
                         break;
 
                     default:
@@ -140,34 +158,88 @@ namespace ContPerf
             {
                 s_buildLogFile = buildLogWriter;
                 s_execLogFile = execLogWriter;
-                for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
+                if (UsePartialComposite)
                 {
-                    BuildAndRun(s_buildModes[modeIndex], modeIndex, s_buildModes.Length, out results[modeIndex], out jitMethodCounts[modeIndex]);
+                    MeasurePartialComposite();
+                }
+                else
+                {
+                    for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
+                    {
+                        BuildAndRun(s_buildModes[modeIndex], compositeFileList: "", modeIndex, s_buildModes.Length, out results[modeIndex], out jitMethodCounts[modeIndex], out long publishSize);
+                    }
                 }
                 s_buildLogFile = null;
                 s_execLogFile = null;
             }
 
-            Console.WriteLine("   COUNT |     AVG% |      AVG |      JIT | MODE");
-            Console.WriteLine("------------------------------------------------");
-            for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
+            if (!UsePartialComposite)
             {
-                Statistics result = results[modeIndex];
-                long averagePercentage = (result.Average * 100L / Math.Max(results[0].Average, 1));
-                Console.WriteLine("{0,8} | {1,8} | {2,8} | {3,8} | {4}",
-                    result.Count,
-                    averagePercentage,
-                    result.Average,
-                    jitMethodCounts[modeIndex],
-                    s_buildModes[modeIndex]);
+                Console.WriteLine("   COUNT |     AVG% |      AVG |      JIT | MODE");
+                Console.WriteLine("------------------------------------------------");
+                for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
+                {
+                    Statistics result = results[modeIndex];
+                    long averagePercentage = (result.Average * 100L / Math.Max(results[0].Average, 1));
+                    Console.WriteLine("{0,8} | {1,8} | {2,8} | {3,8} | {4}",
+                        result.Count,
+                        averagePercentage,
+                        result.Average,
+                        jitMethodCounts[modeIndex],
+                        s_buildModes[modeIndex]);
+                }
             }
 
             return 0;
         }
 
-        private static void BuildAndRun(in string buildMode, int index, int count, out Statistics stat, out int jitMethodCount)
+        private static void MeasurePartialComposite()
         {
-            string? image = Build(buildMode, index, count);
+            const string buildMode = "default-r2r";
+            string[] compositeFileList = File.ReadAllLines(s_compositeFileList!);
+            Statistics[] statistics = new Statistics[compositeFileList.Length + 1];
+            int[] jitMethodCount = new int[compositeFileList.Length + 1];
+            long[] publishSizes = new long[compositeFileList.Length + 1];
+            for (int index = 0; index < compositeFileList.Length; index += 10)
+            {
+                IEnumerable<string> compositeFileListTop = compositeFileList.Take(index + 1);
+                string partialListFileName = Path.Combine(s_folderName, string.Format("partial-list-{0}.txt", index + 1));
+                File.WriteAllLines(partialListFileName, compositeFileListTop);
+                BuildAndRun(buildMode, partialListFileName, index, compositeFileList.Length, out Statistics partialStat, out int partialMethodCount, out long publishSize);
+                statistics[index] = partialStat;
+                jitMethodCount[index] = partialMethodCount;
+                publishSizes[index] = publishSize;
+            }
+
+            // Build full composite
+            BuildAndRun(buildMode, "*", compositeFileList.Length, compositeFileList.Length, out Statistics fullStat, out int fullMethodCount, out long fullPublishSize);
+            statistics[compositeFileList.Length] = fullStat;
+            jitMethodCount[compositeFileList.Length] = fullMethodCount;
+            publishSizes[compositeFileList.Length] = fullPublishSize;
+
+            Console.WriteLine("#COMPOSITE | PUBLISH SIZE | JIT COUNT | STARTUP USECS |       MIN |       MAX |    STDDEV");
+            Console.WriteLine("-----------------------------------------------------------------------------------------");
+            for (int index = 0; index <= compositeFileList.Length; index++)
+            {
+                Statistics stat = statistics[index];
+                if (stat != null)
+                {
+                    Console.WriteLine(
+                        "{0,10} | {1,12} | {2,9} | {3,13} | {4,9} | {5,9} | {6,9}",
+                        index,
+                        publishSizes[index],
+                        jitMethodCount[index],
+                        stat.Average,
+                        stat.Minimum,
+                        stat.Maximum,
+                        stat.StandardDeviation);
+                }
+            }
+        }
+
+        private static void BuildAndRun(in string buildMode, string compositeFileList, int index, int count, out Statistics stat, out int jitMethodCount, out long publishSize)
+        {
+            string? image = Build(buildMode, compositeFileList, index, count, out publishSize);
             if (image == null)
             {
                 stat = new Statistics();
@@ -177,7 +249,7 @@ namespace ContPerf
             Run(buildMode, image, useTieredCompilation: UseTieredCompilation, useReadyToRun: UseReadyToRun, out stat, out jitMethodCount);
         }
 
-        private static string? Build(in string buildMode, int index, int total)
+        private static string? Build(in string buildMode, in string compositeFileList, int index, int total, out long publishSize)
         {
             Stopwatch sw = Stopwatch.StartNew();
             s_buildLogFile!.WriteLine("Building configuration: {0} ({1} / {2})", buildMode, index, total);
@@ -186,6 +258,11 @@ namespace ContPerf
             buildArgs.Append(UseLinux ? "linux" : "win");
             buildArgs.Append(' ');
             buildArgs.Append(buildMode);
+            if (!string.IsNullOrEmpty(compositeFileList))
+            {
+                buildArgs.Append(' ');
+                buildArgs.Append(compositeFileList);
+            }
 
             ProcessStartInfo psiBuildCmd = new ProcessStartInfo()
             {
@@ -196,6 +273,7 @@ namespace ContPerf
             psiBuildCmd.Environment["UseContainers"] = UseContainers ? "1" : "0";
 
             int exitCode = RunProcess(psiBuildCmd, s_buildLogFile!, out List<string> stdout);
+            publishSize = 0;
 
             string? imageId = null;
             if (exitCode == 0)
@@ -203,6 +281,22 @@ namespace ContPerf
                 if (!UseContainers)
                 {
                     return "";
+                }
+
+                for (int i = stdout.Count - 1; i >= 0; i--)
+                {
+                    string line = stdout[i];
+                    int r2rLengthIndex = line.IndexOf(R2RLengthString);
+                    if (r2rLengthIndex >= 0)
+                    {
+                        int r2rLengthStart = r2rLengthIndex + R2RLengthString.Length;
+                        int end = r2rLengthStart;
+                        while (end < line.Length && char.IsDigit(line[end]))
+                        {
+                            end++;
+                        }
+                        publishSize = long.Parse(line.AsSpan(r2rLengthStart, end - r2rLengthStart));
+                    }
                 }
 
                 for (int i = stdout.Count - 1; i >= 0 && i >= stdout.Count - 10; i--)

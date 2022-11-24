@@ -15,7 +15,7 @@ namespace runcg2
         private string _app = "";
         private string _cg2Folder = "";
         private string _commonArguments = "";
-        private HashSet<string> _compositeAssemblies = new HashSet<string>();
+        private HashSet<string>? _compositeAssemblies;
 
         public static int Main(string[] args)
         {
@@ -61,7 +61,7 @@ namespace runcg2
             foreach (string dll in Directory.EnumerateFiles(_folder, "*.dll"))
             {
                 string simpleName = Path.GetFileNameWithoutExtension(dll);
-                if (_compositeAssemblies.Contains(simpleName))
+                if (_compositeAssemblies == null || _compositeAssemblies.Contains(simpleName))
                 {
                     compositeFiles.Add(dll);
                 }
@@ -80,18 +80,27 @@ namespace runcg2
 
             Console.WriteLine("Succeeded: {0}, failed: {1}", _successCount, _failureCount);
 
+            long totalSize = 0;
+
             string[] compiledFiles = Directory.GetFiles(_cg2Folder);
             foreach (string file in compiledFiles)
             {
+                totalSize += new FileInfo(file).Length;
                 File.Move(file, Path.Combine(_folder, Path.GetFileName(file)), overwrite: true);
             }
+
+            Console.WriteLine("### R2R-length: {0} ###", totalSize);
 
             return _failureCount == 0 ? 0 : 1;
         }
 
-        private static HashSet<string> LoadCompositeAssemblies(string path)
+        private static HashSet<string>? LoadCompositeAssemblies(string path)
         {
-            HashSet<string> result = new HashSet<string>();
+            if (path == "*")
+            {
+                return null;
+            }
+            HashSet<string>? result = new HashSet<string>();
             if (!string.IsNullOrEmpty(path))
             {
                 result.UnionWith(File.ReadAllLines(path));
