@@ -2,6 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Diagnostics;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace runcg2
@@ -12,10 +15,11 @@ namespace runcg2
         private int _successCount;
 
         private string _folder = "";
+        private string _appFolder = "";
         private string _app = "";
-        private string _cg2Folder = "";
         private string _commonArguments = "";
         private HashSet<string>? _compositeAssemblies;
+        private int _compositeAssemblyCount;
 
         public static int Main(string[] args)
         {
@@ -25,10 +29,11 @@ namespace runcg2
         private int TryMain(string[] args)
         {
             _folder = args[0];
-            _compositeAssemblies = LoadCompositeAssemblies(args[1]);
-            _app = args[2];
+            int.TryParse(args[2], out _compositeAssemblyCount);
+            _compositeAssemblies = LoadCompositeAssemblies(args[1], _compositeAssemblyCount);
+            _app = args[3];
             StringBuilder arguments = new StringBuilder();
-            for (int argIndex = 3; argIndex < args.Length; argIndex++)
+            for (int argIndex = 4; argIndex < args.Length; argIndex++)
             {
                 string arg = args[argIndex];
                 if (arguments.Length > 0)
@@ -48,53 +53,64 @@ namespace runcg2
             }
 
             _commonArguments = arguments.ToString();
-            _cg2Folder = Path.Combine(_folder, "CG2");
-            Directory.CreateDirectory(_cg2Folder);
-            string[] files = Directory.GetFiles(_cg2Folder);
-            foreach (string file in files)
-            {
-                File.Delete(file);
-            }
+            _appFolder = Path.Combine(_folder, "app");
 
+            int totalFiles = 0;
             List<KeyValuePair<string, long>> dllSizes = new List<KeyValuePair<string, long>>();
-            List<string> compositeFiles = new List<string>();
+            HashSet<string> compositeFiles = new HashSet<string>();
             foreach (string dll in Directory.EnumerateFiles(_folder, "*.dll"))
             {
-                string simpleName = Path.GetFileNameWithoutExtension(dll);
-                if (_compositeAssemblies == null || _compositeAssemblies.Contains(simpleName))
+                if (IsManagedAssembly(dll))
+                {
+                    totalFiles++;
+                    string simpleName = Path.GetFileNameWithoutExtension(dll);
+                    if (_compositeAssemblies == null || _compositeAssemblies.Contains(simpleName))
+                    {
+                        compositeFiles.Add(dll);
+                    }
+                    else
+                    {
+                        dllSizes.Add(new KeyValuePair<string, long>(dll, new FileInfo(dll).Length));
+                    }
+                }
+            }
+
+            List<string> singleFiles = new List<string>();
+            foreach (string dll in dllSizes.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key))
+            {
+                if (compositeFiles.Count < _compositeAssemblyCount)
                 {
                     compositeFiles.Add(dll);
                 }
                 else
                 {
-                    dllSizes.Add(new KeyValuePair<string, long>(dll, new FileInfo(dll).Length));
+                    singleFiles.Add(dll);
                 }
             }
 
+            long compositeSize = 0;
             if (compositeFiles.Count > 0)
             {
-                CompileComposite(compositeFiles);
+                compositeSize = CompileComposite(compositeFiles);
             }
 
-            Parallel.ForEach(dllSizes.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key), CompileFile);
+            // Parallel.ForEach(singleFiles, CompileFile);
+            // Console.WriteLine("Succeeded: {0}, failed: {1}", _successCount, _failureCount);
 
-            Console.WriteLine("Succeeded: {0}, failed: {1}", _successCount, _failureCount);
+            long singleSize = singleFiles.Sum(dll => new FileInfo(Path.Combine(_appFolder, Path.GetFileName(dll))).Length);
+            long totalSize = compositeSize + singleSize;
 
-            long totalSize = 0;
-
-            string[] compiledFiles = Directory.GetFiles(_cg2Folder);
-            foreach (string file in compiledFiles)
-            {
-                totalSize += new FileInfo(file).Length;
-                File.Move(file, Path.Combine(_folder, Path.GetFileName(file)), overwrite: true);
-            }
-
+            Console.WriteLine("### Total dlls: {0} ###", totalFiles);
+            Console.WriteLine("### Composite:  {0} ###", compositeFiles.Count);
+            Console.WriteLine("### CompSize:   {0} ###", compositeSize);
+            Console.WriteLine("### Singlefile: {0} ###", singleFiles.Count);
+            Console.WriteLine("### SingleSize: {0} ###", singleSize);
             Console.WriteLine("### R2R-length: {0} ###", totalSize);
 
             return _failureCount == 0 ? 0 : 1;
         }
 
-        private static HashSet<string>? LoadCompositeAssemblies(string path)
+        private static HashSet<string>? LoadCompositeAssemblies(string path, int count)
         {
             if (path == "*")
             {
@@ -103,14 +119,14 @@ namespace runcg2
             HashSet<string>? result = new HashSet<string>();
             if (!string.IsNullOrEmpty(path))
             {
-                result.UnionWith(File.ReadAllLines(path));
+                result.UnionWith(File.ReadAllLines(path).Take(count));
             }
             return result;
         }
 
         private void CompileFile(string dll)
         {
-            string output = Path.Combine(_cg2Folder, Path.GetFileName(dll));
+            string output = Path.Combine(_appFolder, Path.GetFileName(dll));
             string fileArgs = _commonArguments;
             fileArgs += " -o:" + output;
             fileArgs += " -O";
@@ -139,19 +155,37 @@ namespace runcg2
             }
         }
 
-        private void CompileComposite(IEnumerable<string> files)
+        private static bool IsManagedAssembly(string file)
+        {
+            using (FileStream peStream = new FileStream(file, FileMode.Open, FileAccess.Read))
+            {
+                using (PEReader peReader = new PEReader(peStream))
+                {
+                    return peReader.PEHeaders.CorHeader != null;
+                }
+            }
+        }
+
+        private long CompileComposite(IEnumerable<string> files)
         {
             string compositeName = "composite." + Path.GetFileNameWithoutExtension(files.First()) + ".dll";
-            string output = Path.Combine(_cg2Folder, compositeName);
-            string fileArgs = _commonArguments;
-            fileArgs += " --composite";
-            fileArgs += " -o:" + output;
-            fileArgs += " -O";
+            string output = Path.Combine(_appFolder, compositeName);
+            string responseFile = output + ".rsp";
+            string fileArgs = _commonArguments + " @" + responseFile;
+            StringBuilder responseFileContent = new StringBuilder();
+            responseFileContent.AppendLine("--composite");
+            responseFileContent.AppendLine("-o:" + output);
+            responseFileContent.AppendLine("-O");
             foreach (string dll in files)
             {
-                fileArgs += " " + dll;
+                responseFileContent.AppendLine(dll);
             }
-            fileArgs += $" -r:{_folder}\\*.dll";
+            responseFileContent.AppendLine($"-r:{_folder}\\*.dll");
+
+            Console.WriteLine("Compiling composite image {0}", output);
+            Console.WriteLine("Crossgen2 args: {0}", fileArgs);
+            Console.WriteLine(responseFileContent.ToString());
+            File.WriteAllText(responseFile, responseFileContent.ToString());
 
             ProcessStartInfo psi = new ProcessStartInfo()
             {
@@ -172,6 +206,14 @@ namespace runcg2
                     Interlocked.Increment(ref _successCount);
                 }
             }
+
+            long totalSize = new FileInfo(output).Length;
+            foreach (string dll in files)
+            {
+                totalSize += new FileInfo(Path.Combine(_appFolder, Path.GetFileName(dll))).Length;
+            }
+
+            return totalSize;
         }
     }
 }
