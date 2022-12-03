@@ -18,7 +18,7 @@ namespace runcg2
         private string _appFolder = "";
         private string _app = "";
         private string _commonArguments = "";
-        private HashSet<string>? _compositeAssemblies;
+        private Dictionary<string, int>? _compositeAssemblies;
         private int _compositeAssemblyCount;
 
         public static int Main(string[] args)
@@ -30,7 +30,7 @@ namespace runcg2
         {
             _folder = args[0];
             int.TryParse(args[2], out _compositeAssemblyCount);
-            _compositeAssemblies = LoadCompositeAssemblies(args[1], _compositeAssemblyCount);
+            _compositeAssemblies = LoadCompositeAssemblies(args[1], _compositeAssemblyCount >= 0 ? _compositeAssemblyCount : int.MaxValue);
             _app = args[3];
             StringBuilder arguments = new StringBuilder();
             for (int argIndex = 4; argIndex < args.Length; argIndex++)
@@ -57,28 +57,36 @@ namespace runcg2
 
             int totalFiles = 0;
             List<KeyValuePair<string, long>> dllSizes = new List<KeyValuePair<string, long>>();
-            HashSet<string> compositeFiles = new HashSet<string>();
             foreach (string dll in Directory.EnumerateFiles(_folder, "*.dll"))
             {
                 if (IsManagedAssembly(dll))
                 {
                     totalFiles++;
                     string simpleName = Path.GetFileNameWithoutExtension(dll);
-                    if (_compositeAssemblies == null || _compositeAssemblies.Contains(simpleName))
+                    long size;
+                    if (_compositeAssemblies != null && _compositeAssemblies.TryGetValue(simpleName, out int line))
                     {
-                        compositeFiles.Add(dll);
+                        size = 1_000_000_000_000_000 - line;
                     }
                     else
                     {
-                        dllSizes.Add(new KeyValuePair<string, long>(dll, new FileInfo(dll).Length));
+                        size = new FileInfo(dll).Length;
                     }
+                    dllSizes.Add(new KeyValuePair<string, long>(dll, size));
                 }
             }
 
+            string[] dllsBySize = dllSizes.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key).ToArray();
+
+            List<string> compositeFiles = new List<string>();
             List<string> singleFiles = new List<string>();
-            foreach (string dll in dllSizes.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key))
+
+            for (int index = 0; index < dllsBySize.Length; index++)
             {
-                if (compositeFiles.Count < _compositeAssemblyCount)
+                string dll = dllsBySize[index];
+                if (_compositeAssemblies == null ||
+                    index < _compositeAssemblyCount ||
+                    _compositeAssemblyCount < 0 && index != ~_compositeAssemblyCount)
                 {
                     compositeFiles.Add(dll);
                 }
@@ -107,19 +115,37 @@ namespace runcg2
             Console.WriteLine("### SingleSize: {0} ###", singleSize);
             Console.WriteLine("### R2R-length: {0} ###", totalSize);
 
+            foreach (string dll in singleFiles)
+            {
+                Console.WriteLine("### SingleItem: {0} ###", Path.GetFileNameWithoutExtension(dll));
+            }
+
+            foreach (string dll in compositeFiles)
+            {
+                Console.WriteLine("### CompItem: {0} ###", Path.GetFileNameWithoutExtension(dll));
+            }
+
             return _failureCount == 0 ? 0 : 1;
         }
 
-        private static HashSet<string>? LoadCompositeAssemblies(string path, int count)
+        private static Dictionary<string, int>? LoadCompositeAssemblies(string path, int count)
         {
             if (path == "*")
             {
                 return null;
             }
-            HashSet<string>? result = new HashSet<string>();
+            Dictionary<string, int>? result = new Dictionary<string, int>();
             if (!string.IsNullOrEmpty(path))
             {
-                result.UnionWith(File.ReadAllLines(path).Take(count));
+                int lineIndex = 0;
+                foreach (string line in File.ReadAllLines(path).Take(count))
+                {
+                    if (!result.ContainsKey(line))
+                    {
+                        result.Add(line, lineIndex);
+                    }
+                    lineIndex++;
+                }
             }
             return result;
         }
