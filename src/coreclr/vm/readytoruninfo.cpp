@@ -516,6 +516,10 @@ PTR_ReadyToRunInfo ReadyToRunInfo::Initialize(Module * pModule, AllocMemTracker 
 
     PEAssembly * pFile = pModule->GetPEAssembly();
 
+#ifdef _DEBUG
+    wprintf(L"### Loaded asembly: %S\n", pModule->GetSimpleName());
+#endif
+
     if (!g_pConfig->ReadyToRun())
     {
         // Log message is ignored in this case.

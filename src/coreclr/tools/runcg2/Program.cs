@@ -20,6 +20,7 @@ namespace runcg2
         private string _commonArguments = "";
         private Dictionary<string, int>? _compositeAssemblies;
         private int _compositeAssemblyCount;
+        private bool _buildFullComposite;
 
         public static int Main(string[] args)
         {
@@ -28,29 +29,65 @@ namespace runcg2
 
         private int TryMain(string[] args)
         {
-            _folder = args[0];
-            int.TryParse(args[2], out _compositeAssemblyCount);
-            _compositeAssemblies = LoadCompositeAssemblies(args[1], _compositeAssemblyCount >= 0 ? _compositeAssemblyCount : int.MaxValue);
-            _app = args[3];
+            string compositeFileList = "";
             StringBuilder arguments = new StringBuilder();
-            for (int argIndex = 4; argIndex < args.Length; argIndex++)
+
+            for (int argIndex = 0; argIndex < args.Length; argIndex++)
             {
                 string arg = args[argIndex];
-                if (arguments.Length > 0)
+                if (arg[0] == '-')
                 {
-                    arguments.Append(' ');
-                }
-                if (arg.Contains(' ') || arg.Contains('\"'))
-                {
-                    arguments.Append('\"');
-                    arguments.Append(arg.Replace("\"", "\"\""));
-                    arguments.Append('\"');
+                    switch (arg)
+                    {
+                        case "-dir":
+                            _folder = args[++argIndex];
+                            break;
+
+                        case "-list":
+                            compositeFileList = args[++argIndex];
+                            break;
+
+                        case "-count":
+                            int.TryParse(args[++argIndex], out _compositeAssemblyCount);
+                            break;
+
+                        case "-full":
+                            _buildFullComposite = true;
+                            break;
+
+                        default:
+                            throw new NotImplementedException(arg);
+                    }
                 }
                 else
                 {
-                    arguments.Append(arg);
+                    if (string.IsNullOrEmpty(_app))
+                    {
+                        _app = arg;
+                    }
+                    while (++argIndex < args.Length)
+                    {
+                        arg = args[argIndex];
+                        if (arguments.Length > 0)
+                        {
+                            arguments.Append(' ');
+                        }
+                        if (arg.Contains(' ') || arg.Contains('\"'))
+                        {
+                            arguments.Append('\"');
+                            arguments.Append(arg.Replace("\"", "\"\""));
+                            arguments.Append('\"');
+                        }
+                        else
+                        {
+                            arguments.Append(arg);
+                        }
+                    }
+                    break;
                 }
             }
+
+            _compositeAssemblies = LoadCompositeAssemblies(compositeFileList, _compositeAssemblyCount >= 0 ? _compositeAssemblyCount : int.MaxValue);
 
             _commonArguments = arguments.ToString();
             _appFolder = Path.Combine(_folder, "app");
@@ -99,7 +136,7 @@ namespace runcg2
             long compositeSize = 0;
             if (compositeFiles.Count > 0)
             {
-                compositeSize = CompileComposite(compositeFiles);
+                compositeSize = CompileComposite(compositeFiles, singleFiles);
             }
 
             // Parallel.ForEach(singleFiles, CompileFile);
@@ -150,15 +187,27 @@ namespace runcg2
             return result;
         }
 
+        private void AddCommonCG2Options(StringBuilder responseFileContent, string output)
+        {
+            responseFileContent.AppendLine("-o:" + output);
+            responseFileContent.AppendLine("-O");
+            responseFileContent.AppendLine("--mapcsv");
+            responseFileContent.AppendLine($"-r:{_folder}\\*.dll");
+        }
+
         private void CompileFile(string dll)
         {
             string output = Path.Combine(_appFolder, Path.GetFileName(dll));
-            string fileArgs = _commonArguments;
-            fileArgs += " -o:" + output;
-            fileArgs += " -O";
-            fileArgs += " " + dll;
-            fileArgs += $" -r:{_folder}\\*.dll";
-            // fileArgs += " --pdb";
+            string responseFile = output + ".rsp";
+            StringBuilder responseFileContent = new StringBuilder();
+            string fileArgs = _commonArguments + "@" + responseFile;
+            AddCommonCG2Options(responseFileContent, output);
+            responseFileContent.AppendLine(dll);
+            File.WriteAllText(responseFile, responseFileContent.ToString());
+
+            Console.WriteLine("Compiling R2R image {0}", output);
+            Console.WriteLine("Running: {0} {1}", _app, fileArgs);
+            Console.WriteLine(responseFileContent.ToString());
 
             ProcessStartInfo psi = new ProcessStartInfo()
             {
@@ -192,24 +241,29 @@ namespace runcg2
             }
         }
 
-        private long CompileComposite(IEnumerable<string> files)
+        private long CompileComposite(IEnumerable<string> compositeFiles, IEnumerable<string> singleFiles)
         {
-            string compositeName = "composite." + Path.GetFileNameWithoutExtension(files.First()) + ".dll";
+            string compositeName = "composite." + Path.GetFileNameWithoutExtension(compositeFiles.First()) + ".dll";
             string output = Path.Combine(_appFolder, compositeName);
             string responseFile = output + ".rsp";
             string fileArgs = _commonArguments + " @" + responseFile;
             StringBuilder responseFileContent = new StringBuilder();
+            AddCommonCG2Options(responseFileContent, output);
             responseFileContent.AppendLine("--composite");
-            responseFileContent.AppendLine("-o:" + output);
-            responseFileContent.AppendLine("-O");
-            foreach (string dll in files)
+            foreach (string dll in compositeFiles)
             {
                 responseFileContent.AppendLine(dll);
             }
-            responseFileContent.AppendLine($"-r:{_folder}\\*.dll");
+            if (_buildFullComposite)
+            {
+                foreach (string singleDll in singleFiles)
+                {
+                    responseFileContent.AppendLine("-u:" + singleDll);
+                }
+            }
 
             Console.WriteLine("Compiling composite image {0}", output);
-            Console.WriteLine("Crossgen2 args: {0}", fileArgs);
+            Console.WriteLine("Running: {0} {1}", _app, fileArgs);
             Console.WriteLine(responseFileContent.ToString());
             File.WriteAllText(responseFile, responseFileContent.ToString());
 
@@ -234,7 +288,7 @@ namespace runcg2
             }
 
             long totalSize = new FileInfo(output).Length;
-            foreach (string dll in files)
+            foreach (string dll in compositeFiles)
             {
                 totalSize += new FileInfo(Path.Combine(_appFolder, Path.GetFileName(dll))).Length;
             }

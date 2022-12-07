@@ -130,6 +130,8 @@ namespace ContPerf
         private static TextWriter? s_execLogFile;
         private static TextWriter? s_resultsCsvFile;
 
+        private static Stopwatch s_stopwatch = Stopwatch.StartNew();
+
         public static int Main(string[] args)
         {
             NextArg nextArg = NextArg.Command;
@@ -358,32 +360,37 @@ namespace ContPerf
             {
                 totalFiles = Math.Min(totalFiles, 10);
             }
-            PublishInfo[] publishInfo = new PublishInfo[totalFiles];
-            Statistics[] statistics = new Statistics[totalFiles];
-            List<string>[] jitMethods = new List<string>[totalFiles];
+            PublishInfo[] publishInfo = new PublishInfo[totalFiles + 1];
+            Statistics[] statistics = new Statistics[totalFiles + 1];
+            List<string>[] jitMethods = new List<string>[totalFiles + 1];
+
+            publishInfo[0] = fullPublishInfo;
+            statistics[0] = fullStat;
+            jitMethods[0] = fullMethods;
 
             for (int i = 0; i < totalFiles; i++)
             {
                 BuildAndRun("default-r2r", i, totalFiles,
                     s_compositeFileList!, compositeFileCount: ~i,
-                    out statistics[i], out jitMethods[i], out publishInfo[i]);
+                    out statistics[i + 1], out jitMethods[i + 1], out publishInfo[i + 1]);
+                ShowProgress(i + 1, totalFiles);
             }
 
-            s_resultsCsvFile!.WriteLine("INDEX,PUBLISH_SIZE,STARTUP_USECS,JIT_COUNT,SIZE_DELTA,STARTUP_DELTA,JIT_DELTA,EXCLUDED_ASSEMBLY,");
-            for (int i = 0; i < totalFiles; i++)
+            s_resultsCsvFile!.WriteLine("INDEX,PUBLISH_SIZE,STARTUP_USECS,JIT_COUNT,SIZE_DELTA,STARTUP_DELTA_USECS,JIT_DELTA,EXCLUDED_ASSEMBLY,");
+            for (int i = 0; i <= totalFiles; i++)
             {
                 PublishInfo info = publishInfo[i];
                 Statistics stat = statistics[i];
                 List<string> methods = jitMethods[i];
-                s_resultsCsvFile!.WriteLine("{0},{1},{2},{3},{4},{5},{6},{7},",
+                s_resultsCsvFile!.WriteLine("{0},{1:F6},{2:F6},{3},{4:F6},{5:F6},{6},{7},",
                     i,
                     info.Size,
                     stat.Minimum,
                     methods.Count,
-                    fullPublishInfo.Size - info.Size,
-                    stat.Minimum - fullStat.Minimum,
+                    (info.Size - fullPublishInfo.Size),
+                    (stat.Minimum - fullStat.Minimum),
                     methods.Count - fullMethods.Count,
-                    info.SingleAssemblies.FirstOrDefault());
+                    info.SingleAssemblies.FirstOrDefault() ?? "(none)");
             }
         }
 
@@ -440,11 +447,22 @@ namespace ContPerf
         private static void ShowProgress(bool[] calculated)
         {
             int done = calculated.Sum(c => c ? 1 : 0);
+            ShowProgress(done, calculated.Length);
+        }
+
+        private static void ShowProgress(int done, int total)
+        {
             if (done > s_lastProgress)
             {
                 s_lastProgress = done;
                 Console.WriteLine(s_separator);
-                Console.WriteLine("Completed {0} / {1} ({2:F1}%)", done, calculated.Length, done * 100.0 / calculated.Length);
+                long eta = s_stopwatch.ElapsedMilliseconds * total / Math.Max(done, 1);
+                Console.WriteLine("{0:F3} .. {1} / {2} ({3:F1}%, ETA {4:F3})",
+                    s_stopwatch.ElapsedMilliseconds * 1e-3,
+                    done,
+                    total,
+                    done * 100.0 / total,
+                    eta * 1e-3);
                 Console.WriteLine(s_separator);
             }
         }
