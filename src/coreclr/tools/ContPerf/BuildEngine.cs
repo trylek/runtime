@@ -1,0 +1,367 @@
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+using System.Collections.Generic;
+using System;
+using System.IO;
+using System.Diagnostics;
+using System.Reflection;
+using System.Text;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Reflection.PortableExecutable;
+using System.Threading;
+
+namespace ContPerf
+{
+    public class PublishInfo
+    {
+        public int TotalFiles;
+        public int CompositeFiles;
+        public int SingleFiles;
+
+        public long TotalSize;
+        public long CompositeSize;
+        public long SingleSize;
+
+        public List<string> SingleAssemblies = new List<string>();
+        public List<string> CompositeAssemblies = new List<string>();
+    }
+
+    public class Statistics
+    {
+        private long _count;
+        private long _sum;
+        private long _sumSquared;
+        private long _minimum = long.MaxValue;
+        private long _maximum;
+
+        public long Count => _count;
+        private long SafeCountDenominator => Math.Max(_count, 1);
+        public long Average => _sum / SafeCountDenominator;
+        public long Minimum => (Count != 0 ? _minimum : 0);
+        public long Maximum => _maximum;
+        public long Variance => _sumSquared / SafeCountDenominator - Average * Average;
+        public long StandardDeviation => (long)Math.Sqrt(Variance);
+
+        public Statistics()
+        {
+        }
+
+        public Statistics(IEnumerable<long> values)
+        {
+            Add(values);
+        }
+
+        public void Add(long value)
+        {
+            _count++;
+            _sum += value;
+            _sumSquared += value * (long)value;
+            if (value < _minimum)
+            {
+                _minimum = value;
+            }
+            if (value > _maximum)
+            {
+                _maximum = value;
+            }
+        }
+
+        public void Add(IEnumerable<long> values)
+        {
+            foreach (long value in values)
+            {
+                Add(value);
+            }
+        }
+    }
+
+
+    public sealed class BuildEngine
+    {
+        private readonly string _crossgen2Path;
+        private readonly bool _useLinux;
+        private readonly bool _useContainers;
+        private readonly bool _buildFullComposite;
+        private readonly string _publishDir;
+        private readonly string _appDir;
+        private readonly string _compositeFileList;
+        private readonly int _compositeFileCount;
+        private readonly TextWriter _buildLogWriter;
+
+        private readonly Dictionary<string, int> _compositeAssemblies;
+        private readonly List<string> _compositeFiles;
+        private readonly List<string> _singleFiles;
+
+        private string? _compositeFileName;
+
+        public BuildEngine(
+            string crossgen2Path,
+            bool useLinux,
+            bool useContainers,
+            bool buildFullComposite,
+            string publishDir,
+            string appDir,
+            string compositeFileList,
+            int compositeFileCount,
+            TextWriter buildLogWriter)
+        {
+            _crossgen2Path = crossgen2Path;
+            _useLinux = useLinux;
+            _useContainers = useContainers;
+            _buildFullComposite = buildFullComposite;
+            _publishDir = publishDir;
+            _appDir = appDir;
+            _compositeFileList = compositeFileList;
+            _compositeFileCount = compositeFileCount;
+            _buildLogWriter = buildLogWriter;
+
+            _compositeAssemblies = new Dictionary<string, int>();
+            _compositeFiles = new List<string>();
+            _singleFiles = new List<string>();
+        }
+
+        public void Build(out PublishInfo publishInfo)
+        {
+            PrepareAppFolder();
+            LoadCompositeAssemblies();
+            SelectAssembliesForCompilation();
+            if (_compositeFiles.Count > 0)
+            {
+                RunCrossgen2();
+            }
+            publishInfo = new PublishInfo();
+            publishInfo.SingleFiles = _singleFiles.Count;
+            publishInfo.CompositeFiles = _compositeFiles.Count;
+            publishInfo.SingleAssemblies = _singleFiles;
+            publishInfo.CompositeAssemblies = _compositeFiles;
+            publishInfo.TotalFiles = _singleFiles.Count + _compositeFiles.Count;
+            publishInfo.SingleSize = _singleFiles.Sum(f => new FileInfo(f).Length);
+            publishInfo.CompositeSize = _compositeFiles.Sum(f => new FileInfo(f).Length)
+                + (_compositeFileName != null ? new FileInfo(_compositeFileName).Length : 0);
+            publishInfo.TotalSize = publishInfo.SingleSize + publishInfo.CompositeSize;
+        }
+
+        private void PrepareAppFolder()
+        {
+            HashSet<string> publishFolders = new HashSet<string>();
+            HashSet<string> appFolders = new HashSet<string>();
+            HashSet<string> publishFiles = new HashSet<string>();
+            HashSet<string> appFiles = new HashSet<string>();
+
+            foreach (string folder in Directory.EnumerateDirectories(_publishDir, "*.*", SearchOption.AllDirectories))
+            {
+                string relativePath = Path.GetRelativePath(_publishDir, folder);
+                if (relativePath.StartsWith("app\\"))
+                {
+                    appFolders.Add(relativePath.Substring(4));
+                }
+                else if (!relativePath.StartsWith("logs\\") && relativePath != "app" && relativePath != "logs")
+                {
+                    publishFolders.Add(relativePath);
+                }
+            }
+
+            foreach (string file in Directory.EnumerateFiles(_publishDir, "*.*", SearchOption.AllDirectories))
+            {
+                string relativePath = Path.GetRelativePath(_publishDir, file);
+                if (relativePath.StartsWith("app\\"))
+                {
+                    appFiles.Add(relativePath.Substring(4));
+                }
+                else if (!relativePath.StartsWith("logs\\"))
+                {
+                    publishFiles.Add(relativePath);
+                }
+            }
+
+            // Remove extra files
+            foreach (string extraFile in appFiles.Where(af => !publishFiles.Contains(af)))
+            {
+                string extraFilePath = Path.Combine(_appDir, extraFile);
+                Console.WriteLine("Deleting extra file {0}", extraFilePath);
+                File.Delete(extraFilePath);
+            }
+
+            // Remove extra folders
+            foreach (string extraFolder in appFolders.Where(af => !publishFolders.Contains(af)))
+            {
+                string extraFolderPath = Path.Combine(_appDir, extraFolder);
+                Console.WriteLine("Deleting extra folder {0}", extraFolderPath);
+                Directory.Delete(extraFolderPath);
+            }
+
+            // Create non-existent folders
+            foreach (string folder in publishFolders)
+            {
+                string folderPath = Path.Combine(_appDir, folder);
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+            }
+
+            // Copy files using hardlinks
+            foreach (string file in publishFiles)
+            {
+                string publishPath = Path.Combine(_publishDir, file);
+                string appPath = Path.Combine(_appDir, file);
+                File.Copy(publishPath, appPath, overwrite: true);
+            }
+        }
+
+        private void LoadCompositeAssemblies()
+        {
+            if (!string.IsNullOrEmpty(_compositeFileList))
+            {
+                int lineIndex = 0;
+                foreach (string line in File.ReadAllLines(_compositeFileList))
+                {
+                    if (!_compositeAssemblies.ContainsKey(line))
+                    {
+                        _compositeAssemblies.Add(line, lineIndex);
+                    }
+                    lineIndex++;
+                }
+            }
+        }
+
+        private void SelectAssembliesForCompilation()
+        {
+            int totalFiles = 0;
+            List<KeyValuePair<string, long>> dllSizes = new List<KeyValuePair<string, long>>();
+            foreach (string dll in Directory.EnumerateFiles(_publishDir, "*.dll"))
+            {
+                if (IsManagedAssembly(dll))
+                {
+                    totalFiles++;
+                    string simpleName = Path.GetFileNameWithoutExtension(dll);
+                    long size;
+                    if (_compositeAssemblies != null && _compositeAssemblies.TryGetValue(simpleName, out int line))
+                    {
+                        size = 1_000_000_000_000_000 - line;
+                    }
+                    else
+                    {
+                        size = new FileInfo(dll).Length;
+                    }
+                    dllSizes.Add(new KeyValuePair<string, long>(dll, size));
+                }
+            }
+
+            string[] dllsBySize = dllSizes.OrderByDescending(kvp => kvp.Value).Select(kvp => kvp.Key).ToArray();
+
+            for (int index = 0; index < dllsBySize.Length; index++)
+            {
+                string dll = dllsBySize[index];
+                if (_compositeAssemblies == null ||
+                    index < _compositeFileCount ||
+                    _compositeFileCount < 0 && index != ~_compositeFileCount)
+                {
+                    _compositeFiles.Add(dll);
+                }
+                else
+                {
+                    _singleFiles.Add(dll);
+                }
+            }
+        }
+
+        private void RunCrossgen2()
+        {
+            string compositeName = "composite." + Path.GetFileNameWithoutExtension(_compositeFiles[0]) + ".dll";
+            _compositeFileName = Path.Combine(_appDir, compositeName);
+
+            string responseFile = _compositeFileName + ".rsp";
+            string fileArgs = "@" + responseFile;
+            StringBuilder responseFileContent = new StringBuilder();
+
+            responseFileContent.AppendLine("-o:" + _compositeFileName);
+            responseFileContent.AppendLine("-O");
+            responseFileContent.AppendLine("--mapcsv");
+            responseFileContent.AppendLine($"-r:{_publishDir}\\*.dll");
+            responseFileContent.AppendLine("--composite");
+
+            foreach (string dll in _compositeFiles)
+            {
+                responseFileContent.AppendLine(dll);
+            }
+
+            if (_buildFullComposite)
+            {
+                foreach (string singleDll in _singleFiles)
+                {
+                    responseFileContent.AppendLine("-u:" + singleDll);
+                }
+            }
+
+            Console.WriteLine("Compiling composite image {0}", _compositeFileName);
+            Console.WriteLine("Running: {0} {1}", _crossgen2Path, fileArgs);
+            Console.WriteLine(responseFileContent.ToString());
+            File.WriteAllText(responseFile, responseFileContent.ToString());
+
+            ProcessStartInfo psi = new ProcessStartInfo()
+            {
+                FileName = _crossgen2Path,
+                Arguments = fileArgs,
+            };
+
+            using (Process cg2Process = Process.Start(psi)!)
+            {
+                cg2Process.WaitForExit();
+                if (cg2Process.ExitCode != 0)
+                {
+                    throw new Exception($"Error compiling composite image '{_compositeFileName}'");
+                }
+            }
+        }
+
+        private static bool IsManagedAssembly(string file)
+        {
+            using (FileStream peStream = new FileStream(file, FileMode.Open, FileAccess.Read))
+            {
+                using (PEReader peReader = new PEReader(peStream))
+                {
+                    return peReader.PEHeaders.CorHeader != null;
+                }
+            }
+        }
+
+
+        /*
+        private static bool TryReadCG2Value(string line, string tag, ref int value)
+        {
+            string stringValue = "";
+            bool result = TryReadCG2Value(line, tag, ref stringValue);
+            if (result)
+            {
+                value = int.Parse(stringValue);
+            }
+            return result;
+        }
+
+        private static bool TryReadCG2Value(string line, string tag, ref string value)
+        {
+            int tagIndex = line.IndexOf(tag);
+            if (tagIndex >= 0)
+            {
+                int start = tagIndex + tag.Length;
+                int end = line.Length;
+                while (end > start && line[end - 1] == '#')
+                {
+                    end--;
+                }
+                while (end > start && char.IsWhiteSpace(line[end - 1]))
+                {
+                    end--;
+                }
+
+                value = line.Substring(start, end - start);
+                return true;
+            }
+            return false;
+        }
+        */
+    }
+}

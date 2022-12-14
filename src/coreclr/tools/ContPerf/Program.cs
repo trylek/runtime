@@ -7,106 +7,43 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.PortableExecutable;
 using System.Runtime;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Xml;
+using System.Xml.Linq;
 
 namespace ContPerf
 {
-    public class PublishInfo
-    {
-        public int Size;
-        public int TotalFiles;
-        public int CompositeFiles;
-        public int CompositeSize;
-        public int SingleFiles;
-        public int SingleSize;
-
-        public List<string> SingleAssemblies = new List<string>();
-        public List<string> CompositeAssemblies = new List<string>();
-    }
-
-    public class Statistics
-    {
-        private long _count;
-        private long _sum;
-        private long _sumSquared;
-        private long _minimum = long.MaxValue;
-        private long _maximum;
-
-        public long Count => _count;
-        private long SafeCountDenominator => Math.Max(_count, 1);
-        public long Average => _sum / SafeCountDenominator;
-        public long Minimum => (Count != 0 ? _minimum : 0);
-        public long Maximum => _maximum;
-        public long Variance => _sumSquared / SafeCountDenominator - Average * Average;
-        public long StandardDeviation => (long)Math.Sqrt(Variance);
-
-        public Statistics()
-        {
-        }
-
-        public Statistics(IEnumerable<long> values)
-        {
-            Add(values);
-        }
-
-        public void Add(long value)
-        {
-            _count++;
-            _sum += value;
-            _sumSquared += value * (long)value;
-            if (value < _minimum)
-            {
-                _minimum = value;
-            }
-            if (value > _maximum)
-            {
-                _maximum = value;
-            }
-        }
-
-        public void Add(IEnumerable<long> values)
-        {
-            foreach (long value in values)
-            {
-                Add(value);
-            }
-        }
-    }
-
     public sealed class Program
     {
-        private const string LinuxImageString = "writing image sha256:";
-        private const string WindowsImageString = "Successfully built ";
-        private const string CompositeFilesString = "### Composite:  ";
-        private const string CompositeSizeString = "### CompSize:   ";
-        private const string SingleFilesString = "### Singlefile: ";
-        private const string SingleSizeString = "### SingleSize: ";
-        private const string TotalFilesString = "### Total dlls: ";
-        private const string R2RLengthString = "### R2R-length: ";
-        private const string SingleItemString = "### SingleItem: ";
-        private const string CompositeItemString = "### CompItem: ";
         private const string JitCompiledTag = ": JIT compiled";
         private const int WarmupIterations = 2;
-        private const int DefaultIterations = 50;
+        private const int DefaultIterations = 2;
 
         private static bool s_useLinux;
+        private static bool s_useCrank;
         private static bool s_useReadyToRun = true;
         private static bool s_useTieredCompilation;
         private static bool s_useContainers = true;
         private static bool s_usePartialComposite;
         private static bool s_measureNegativeComposite;
         private static bool s_useFastMode;
+        private static bool s_buildFullComposite;
         private static int? s_partialIndex;
         private static int s_iterations = DefaultIterations;
 
         private enum NextArg
         {
+            Crossgen2Path,
             Command,
             CompositeFileList,
             PartialIndex,
             Iterations,
+            CrankConfigFile,
+            CrankScenario,
         }
 
         private static string? s_compositeFileList;
@@ -121,8 +58,12 @@ namespace ContPerf
             "cross-module-inlining",
         };
 
-        private static string s_folderName = "";
+        private static string s_crossgen2Path = "";
         private static string s_publishFolderName = "";
+        private static string s_appFolderName = "";
+        private static string s_logsFolderName = "";
+        private static string s_crankConfigFile = "";
+        private static string s_crankScenario = "";
 
         private static string? s_timestamp;
 
@@ -134,12 +75,17 @@ namespace ContPerf
 
         public static int Main(string[] args)
         {
-            NextArg nextArg = NextArg.Command;
+            NextArg nextArg = NextArg.Crossgen2Path;
 
             foreach (string arg in args)
             {
                 switch (nextArg)
                 {
+                    case NextArg.Crossgen2Path:
+                        s_crossgen2Path = arg;
+                        nextArg = NextArg.Command;
+                        break;
+
                     case NextArg.CompositeFileList:
                         s_compositeFileList = arg;
                         nextArg = NextArg.Command;
@@ -155,9 +101,28 @@ namespace ContPerf
                         nextArg = NextArg.Command;
                         break;
 
+                    case NextArg.CrankConfigFile:
+                        s_crankConfigFile = arg;
+                        nextArg = NextArg.CrankScenario;
+                        break;
+
+                    case NextArg.CrankScenario:
+                        s_crankScenario = arg;
+                        nextArg = NextArg.Command;
+                        break;
+
                     case NextArg.Command:
                         switch (arg)
                         {
+                            case "CRANK":
+                                s_useCrank = true;
+                                nextArg = NextArg.CrankConfigFile;
+                                break;
+
+                            case "FULL":
+                                s_buildFullComposite = true;
+                                break;
+
                             case "LINUX":
                                 s_useLinux = true;
                                 break;
@@ -209,15 +174,18 @@ namespace ContPerf
                 }
             }
 
-            string rid = (s_useLinux ? "linux" : "win") + "-x64";
+            // string rid = (s_useLinux ? "linux" : "win") + "-x64";
 
             s_timestamp = DateTime.Now.ToString("MMdd-HHmm");
-            s_folderName = Directory.GetCurrentDirectory();
-            s_publishFolderName = Path.Combine(s_folderName, "bin", "Release", "net7.0", rid, "publish", "app");
+            s_publishFolderName = Directory.GetCurrentDirectory();
+            s_appFolderName = Path.Combine(s_publishFolderName, "app");
+            s_logsFolderName = Path.Combine(s_publishFolderName, "logs");
 
-            string buildLogFile = Path.Combine(s_folderName, $"build-{s_timestamp}.log");
-            string execLogFile = Path.Combine(s_folderName, $"run-{s_timestamp}.log");
-            string resultsCsvFile = Path.Combine(s_folderName, $"results-{s_timestamp}.csv");
+            Directory.CreateDirectory(s_logsFolderName);
+
+            string buildLogFile = Path.Combine(s_logsFolderName, $"build-{s_timestamp}.log");
+            string execLogFile = Path.Combine(s_logsFolderName, $"run-{s_timestamp}.log");
+            string resultsCsvFile = Path.Combine(s_logsFolderName, $"results-{s_timestamp}.csv");
 
             Statistics[] results = new Statistics[s_buildModes.Length];
             List<string>[] jitMethods = new List<string>[s_buildModes.Length];
@@ -237,8 +205,9 @@ namespace ContPerf
                 {
                     for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
                     {
-                        BuildAndRun(s_buildModes[modeIndex], modeIndex, s_buildModes.Length,
-                            compositeFileList: "", compositeFileCount: 0, out results[modeIndex], out jitMethods[modeIndex],
+                        BuildAndRun(modeIndex, s_buildModes.Length,
+                            compositeFileList: "", compositeFileCount: 0,
+                            out results[modeIndex], out jitMethods[modeIndex],
                             out PublishInfo publishInfo);
                     }
 
@@ -271,14 +240,9 @@ namespace ContPerf
 
         private static void MeasurePartialComposite()
         {
-            if (Build("init", useContainers: false, 0, 0, compositeFileList: "", compositeFileCount: 0, out PublishInfo _) == null)
-            {
-                throw new Exception("App publishing failed");
-            }
-
             if (s_partialIndex.HasValue)
             {
-                BuildPartialCompositeAtIndex($"default-r2r", s_compositeFileList!, s_partialIndex.Value);
+                BuildPartialCompositeAtIndex(s_compositeFileList!, s_partialIndex.Value);
                 return;
             }
 
@@ -288,8 +252,7 @@ namespace ContPerf
                 return;
             }
 
-            const string buildMode = "default-r2r";
-            BuildAndRun(buildMode, 0, 1, "", 0, out Statistics firstPartialStat, out List<string> firstPartialMethods, out PublishInfo firstPublishInfo);
+            BuildAndRun(0, 1, "", 0, out Statistics firstPartialStat, out List<string> firstPartialMethods, out PublishInfo firstPublishInfo);
             int totalFiles = firstPublishInfo.TotalFiles;
             Statistics[] statistics = new Statistics[totalFiles + 1];
             int[] jitMethodCount = new int[totalFiles + 1];
@@ -302,14 +265,15 @@ namespace ContPerf
             calculated[0] = true;
 
             // Build full composite
-            BuildAndRun(buildMode, totalFiles, totalFiles,
-                compositeFileList: "*", compositeFileCount: 1, out Statistics fullStat, out List<string> fullMethods, out PublishInfo fullPublishInfo);
+            BuildAndRun(totalFiles, totalFiles,
+                compositeFileList: s_compositeFileList!, compositeFileCount: totalFiles,
+                out Statistics fullStat, out List<string> fullMethods, out PublishInfo fullPublishInfo);
             statistics[totalFiles] = fullStat;
             jitMethodCount[totalFiles] = fullMethods.Count;
             publishInfos[totalFiles] = fullPublishInfo;
             calculated[totalFiles] = true;
 
-            BisectPartialComposite(buildMode, totalFiles, s_compositeFileList!, statistics, jitMethodCount, publishInfos, calculated, 0, totalFiles);
+            BisectPartialComposite(totalFiles, s_compositeFileList!, statistics, jitMethodCount, publishInfos, calculated, 0, totalFiles);
 
             s_execLogFile!.WriteLine("#COMPOSITE | PUBLISH SIZE | COMP-SIZE | SINGLE-SIZE | JIT COUNT | STARTUP USECS |       MIN |       MAX |    STDDEV");
             s_execLogFile!.WriteLine("-------------------------------------------------------------------------------------------------------------------");
@@ -323,7 +287,7 @@ namespace ContPerf
                     s_execLogFile!.WriteLine(
                         "{0,10} | {1,12} | {2,9} | {3,11} | {4,9} | {5,13} | {6,9} | {7,9} | {8,9}",
                         index,
-                        info.Size,
+                        info.TotalSize,
                         info.CompositeSize,
                         info.SingleSize,
                         jitMethodCount[index],
@@ -335,7 +299,7 @@ namespace ContPerf
                     s_resultsCsvFile!.WriteLine(
                         "{0},{1},{2},{3},{4},{5},{6},{7},{8}",
                         index,
-                        info.Size,
+                        info.TotalSize,
                         info.CompositeSize,
                         info.SingleSize,
                         jitMethodCount[index],
@@ -350,8 +314,8 @@ namespace ContPerf
         private static void MeasureNegativeComposite()
         {
             // Build full composite
-            BuildAndRun("default-r2r", 1, 1,
-                compositeFileList: "*", compositeFileCount: 1,
+            BuildAndRun(1, 1,
+                compositeFileList: s_compositeFileList!, compositeFileCount: int.MaxValue,
                 out Statistics fullStat,
                 out List<string> fullMethods,
                 out PublishInfo fullPublishInfo);
@@ -370,7 +334,7 @@ namespace ContPerf
 
             for (int i = 0; i < totalFiles; i++)
             {
-                BuildAndRun("default-r2r", i, totalFiles,
+                BuildAndRun(i, totalFiles,
                     s_compositeFileList!, compositeFileCount: ~i,
                     out statistics[i + 1], out jitMethods[i + 1], out publishInfo[i + 1]);
                 ShowProgress(i + 1, totalFiles);
@@ -384,10 +348,10 @@ namespace ContPerf
                 List<string> methods = jitMethods[i];
                 s_resultsCsvFile!.WriteLine("{0},{1:F6},{2:F6},{3},{4:F6},{5:F6},{6},{7},",
                     i,
-                    info.Size,
+                    info.TotalSize,
                     stat.Minimum,
                     methods.Count,
-                    (info.Size - fullPublishInfo.Size),
+                    (info.TotalSize - fullPublishInfo.TotalSize),
                     (stat.Minimum - fullStat.Minimum),
                     methods.Count - fullMethods.Count,
                     info.SingleAssemblies.FirstOrDefault() ?? "(none)");
@@ -395,15 +359,15 @@ namespace ContPerf
         }
 
 
-        private static void BuildPartialCompositeAtIndex(string buildMode, string compositeFileList, int compositeFileIndex)
+        private static void BuildPartialCompositeAtIndex(string compositeFileList, int compositeFileIndex)
         {
-            BuildAndRun(buildMode, 1, 1,
+            BuildAndRun(1, 1,
                 compositeFileList, compositeFileIndex,
                 out Statistics stat, out List<string> jitMethods, out PublishInfo publishInfo);
 
             s_buildLogFile!.WriteLine("Composite file list: {0}", compositeFileList);
             s_buildLogFile!.WriteLine("Composite index:     {0}", compositeFileIndex);
-            s_buildLogFile!.WriteLine("Publish size:        {0}", publishInfo.Size);
+            s_buildLogFile!.WriteLine("Publish size:        {0}", publishInfo.TotalSize);
             s_buildLogFile!.WriteLine("Composite size:      {0}", publishInfo.CompositeSize);
             s_buildLogFile!.WriteLine("Single size:         {0}", publishInfo.SingleSize);
             s_buildLogFile!.WriteLine("Total files:         {0}", publishInfo.TotalFiles);
@@ -468,8 +432,13 @@ namespace ContPerf
         }
 
         private static void BisectPartialComposite(
-            string buildMode, int totalFiles, string compositeFileList,
-            Statistics[] statistics, int[] jitMethodCount, PublishInfo[] publishInfo, bool[] calculated, int low, int high)
+            int totalFiles, string compositeFileList,
+            Statistics[] statistics,
+            int[] jitMethodCount,
+            PublishInfo[] publishInfo,
+            bool[] calculated,
+            int low,
+            int high)
         {
             ShowProgress(calculated);
 
@@ -488,11 +457,11 @@ namespace ContPerf
             {
                 bisect = true;
             }
-            if (Math.Abs(highPublish.Size - lowPublish.Size) >= 500000)
+            if (Math.Abs(highPublish.TotalSize - lowPublish.TotalSize) >= 500000)
             {
                 bisect = true;
             }
-            if (s_useFastMode && high - low <= 20)
+            if (s_useFastMode && high - low <= 100)
             {
                 bisect = false;
             }
@@ -500,7 +469,7 @@ namespace ContPerf
             if (bisect)
             {
                 int middle = (high + low) >> 1;
-                BuildAndRun(buildMode, middle, totalFiles,
+                BuildAndRun(middle, totalFiles,
                     compositeFileList, middle,
                     out Statistics middleStat, out List<string> middleMethods, out PublishInfo middlePublishInfo);
                 statistics[middle] = middleStat;
@@ -508,10 +477,10 @@ namespace ContPerf
                 publishInfo[middle] = middlePublishInfo;
                 calculated[middle] = true;
 
-                BisectPartialComposite(buildMode, totalFiles, compositeFileList,
+                BisectPartialComposite(totalFiles, compositeFileList,
                     statistics, jitMethodCount, publishInfo, calculated,
                     low, middle);
-                BisectPartialComposite(buildMode, totalFiles, compositeFileList,
+                BisectPartialComposite(totalFiles, compositeFileList,
                     statistics, jitMethodCount, publishInfo, calculated,
                     middle, high);
             }
@@ -526,11 +495,11 @@ namespace ContPerf
             ShowProgress(calculated);
         }
 
-        private static void BuildAndRun(in string buildMode, int index, int count,
+        private static void BuildAndRun(int index, int count,
             string compositeFileList, int compositeFileCount, out Statistics stat, out List<string> jitMethods,
             out PublishInfo publishInfo)
         {
-            string? image = Build(buildMode, s_useContainers, index, count,
+            string? image = Build(index, count,
                 compositeFileList, compositeFileCount, out publishInfo);
             if (image == null || s_iterations == 0)
             {
@@ -538,137 +507,111 @@ namespace ContPerf
                 jitMethods = new List<string>();
                 return;
             }
-            Run(buildMode, image, useTieredCompilation: s_useTieredCompilation, useReadyToRun: s_useReadyToRun, out stat, out jitMethods);
+            Run(image, useTieredCompilation: s_useTieredCompilation, useReadyToRun: s_useReadyToRun, out stat, out jitMethods);
         }
 
-        private static string? Build(in string buildMode, bool useContainers, int index, int total,
+        /*
+        private static void BuildAndRunUsingCrankBenchmarker(in string buildMode, int index, int count,
+            string compositeFileList, int compositeFileCount, out Statistics stat, out List<string> jitMethods,
+            out PublishInfo publishInfo)
+        {
+            string configYamlFileName = Path.Combine(s_folderName, "config.yaml");
+            string fxAssembliesFileName = Path.Combine(s_folderName, "fx.txt");
+            string aspAssembliesFileName = Path.Combine(s_folderName, "asp.txt");
+
+            StringBuilder configYaml = new StringBuilder();
+
+            configYaml.AppendLine("assemblies:");
+
+            configYaml.AppendLine("  windows: # Going to build the composites on a Windows machine, hence we need a Windows crossgen2 build.");
+            configYaml.AppendLine("    crossgen2s:");
+            configYaml.AppendLine("      - name: RuntimeRepo");
+            if (string.IsNullOrEmpty(s_crossgen2Path))
+            {
+                throw new Exception("Crossgen2 path required for crank testing");
+            }
+            configYaml.AppendLine("        path: " + s_crossgen2Path.Replace("\\", "\\\\"));
+            configYaml.AppendLine("");
+            configYaml.AppendLine("configurations:");
+            configYaml.AppendLine("  - name: " + (s_useLinux ? "LinuxOnWindows" : "WindowsOnWindows"));
+            configYaml.AppendLine("    os: " + (s_useLinux ? "linux" : "windows"));
+            configYaml.AppendLine("    assembliesToUse:");
+            configYaml.AppendLine("      runtime: Latest # We'll be using a nightly build of the SDK.");
+            configYaml.AppendLine("      crossgen2: RuntimeRepo # This is the key that points to which Crossgen2 you want to use. Note that the name above is 'RuntimeRepo'.");
+            configYaml.AppendLine("    scenariosFile: https://raw.githubusercontent.com/aspnet/Benchmarks/main/scenarios/json.benchmarks.yml # Crank stuff.");
+            configYaml.AppendLine("    scenario: json # We want to run the 'json' scenario defined in the file linked above.");
+            configYaml.AppendLine("    buildPhase:");
+            configYaml.AppendLine("      compositeFileList: " + compositeFileList.Replace("\\", "\\\\"));
+            configYaml.AppendLine("      compositeFileCount: " + compositeFileCount.ToString());
+            configYaml.AppendLine("      params:");
+            if (buildMode == "runtime.composite" ||
+                buildMode == "runtime+asp.net.composite" ||
+                buildMode == "runtime.composite+asp.net.composite" ||
+                buildMode == "full.composite")
+            {
+            configYaml.AppendLine("        - frameworkcomposite # Build framework composites.");
+            }
+            if (buildMode == "runtime+asp.net.composite" ||
+                buildMode == "full.composite")
+            {
+            configYaml.AppendLine("        - bundleaspnet # Bundle/include the asp.net binaries into the composite image.");
+            }
+            configYaml.AppendLine("    runPhase:");
+            configYaml.AppendLine("      params:");
+            configYaml.AppendLine("        - appr2r # Tell crank to build its app using ReadyToRun enabled.");
+            if (s_useReadyToRun)
+            {
+            configYaml.AppendLine("        - envreadytorun # Tell crank to set DOTNET_ReadyToRun=1 in its environment.");
+            }
+            if (s_useTieredCompilation)
+            {
+            configYaml.AppendLine("        - envtieredcompilation # Tell crank to set DOTNET_TieredCompilation=1 in its environment.");
+            }
+
+            File.WriteAllText(configYamlFileName, configYaml.ToString());
+
+            StringBuilder args = new StringBuilder();
+
+            args.Append(" --config-file ");
+            args.Append(configYamlFileName);
+            args.AppendFormat(" --iterations {0}", s_iterations);
+
+            ProcessStartInfo benchmarkerPsi = new ProcessStartInfo()
+            {
+                FileName = s_crankBenchmarkerPath,
+                Arguments = args.ToString(),
+            };
+
+            Console.WriteLine("Running crank ({0} / {1}): {2} {3}", index, count, s_crankBenchmarkerPath, args.ToString());
+            Console.WriteLine("Config file:        {0}", configYamlFileName);
+            Console.WriteLine("FX assemblies:      {0}", fxAssembliesFileName);
+            Console.WriteLine("ASP.NET assemblies: {0}", aspAssembliesFileName);
+            RunProcess(benchmarkerPsi, s_buildLogFile!, out List<string> _ / *stdout* /);
+            // TODO: analyze results
+            publishInfo = new PublishInfo();
+            stat = new Statistics();
+            jitMethods = new List<string>();
+        }
+    */
+
+        private static string? Build(int index, int total,
             in string compositeFileList, int compositeFileCount, out PublishInfo publishInfo)
         {
-            Stopwatch sw = Stopwatch.StartNew();
-            s_buildLogFile!.WriteLine("Building configuration: {0} ({1} / {2})", buildMode, index, total);
+            s_buildLogFile!.WriteLine("Building ({0} / {1})", index, total);
 
-            StringBuilder buildArgs = new StringBuilder();
-            buildArgs.Append(s_useLinux ? "linux" : "win");
-            buildArgs.Append(' ');
-            buildArgs.Append(buildMode);
-            if (!string.IsNullOrEmpty(compositeFileList))
-            {
-                buildArgs.Append(' ');
-                buildArgs.Append(compositeFileList);
-                buildArgs.Append(' ');
-                buildArgs.Append(compositeFileCount);
-            }
+            new BuildEngine(
+                s_crossgen2Path,
+                useLinux: s_useLinux,
+                useContainers: s_useContainers,
+                buildFullComposite: s_buildFullComposite,
+                s_publishFolderName,
+                s_appFolderName,
+                compositeFileList,
+                compositeFileCount,
+                s_buildLogFile)
+                .Build(out publishInfo);
 
-            ProcessStartInfo psiBuildCmd = new ProcessStartInfo()
-            {
-                FileName = Path.Combine(s_folderName!, "build.cmd"),
-                Arguments = buildArgs.ToString(),
-                UseShellExecute = false,
-            };
-            psiBuildCmd.Environment["UseContainers"] = useContainers ? "1" : "0";
-
-            int exitCode = RunProcess(psiBuildCmd, s_buildLogFile!, out List<string> stdout);
-            publishInfo = new PublishInfo();
-
-            string? imageId = null;
-            if (exitCode == 0)
-            {
-                for (int i = stdout.Count - 1; i >= 0; i--)
-                {
-                    string line = stdout[i];
-
-                    TryReadCG2Value(line, R2RLengthString, ref publishInfo.Size);
-                    TryReadCG2Value(line, TotalFilesString, ref publishInfo.TotalFiles);
-                    TryReadCG2Value(line, CompositeFilesString, ref publishInfo.CompositeFiles);
-                    TryReadCG2Value(line, CompositeSizeString, ref publishInfo.CompositeSize);
-                    TryReadCG2Value(line, SingleFilesString, ref publishInfo.SingleFiles);
-                    TryReadCG2Value(line, SingleSizeString, ref publishInfo.SingleSize);
-                    string singleItem = "";
-                    if (TryReadCG2Value(line, SingleItemString, ref singleItem))
-                    {
-                        publishInfo.SingleAssemblies.Add(singleItem);
-                    }
-                    string compositeItem = "";
-                    if (TryReadCG2Value(line, CompositeItemString, ref compositeItem))
-                    {
-                        publishInfo.CompositeAssemblies.Add(compositeItem);
-                    }
-                }
-
-                if (useContainers)
-                {
-                    for (int i = stdout.Count - 1; i >= 0 && i >= stdout.Count - 10; i--)
-                    {
-                        string line = stdout[i];
-                        int writingImage = line.IndexOf(LinuxImageString);
-                        int skipOffset = LinuxImageString.Length;
-                        if (writingImage < 0)
-                        {
-                            writingImage = line.IndexOf(WindowsImageString);
-                            skipOffset = WindowsImageString.Length;
-                        }
-                        if (writingImage >= 0)
-                        {
-                            imageId = line.Substring(writingImage + skipOffset);
-                            int blank = imageId.IndexOf(' ');
-                            if (blank >= 0)
-                            {
-                                imageId = imageId.Substring(0, blank);
-                            }
-                            break;
-                        }
-                    }
-                }
-                else
-                {
-                    imageId = "";
-                }
-            }
-            s_buildLogFile!.WriteLine("Done building configuration: {0} ({1} / {2}, {3} msecs)", buildMode, index, total, sw.ElapsedMilliseconds);
-            return imageId;
-
-            /*
-            string outputDir = @"D:\triage\composite\webapi\bin\Release\net6.0\win-x64\publish";
-            if (buildMode.NetCoreComposite)
-            {
-                outputDir = Path.Combine(outputDir, "composite");
-            }
-
-            return Path.Combine(outputDir, "webapi.dll");
-            */
-        }
-
-        private static bool TryReadCG2Value(string line, string tag, ref int value)
-        {
-            string stringValue = "";
-            bool result = TryReadCG2Value(line, tag, ref stringValue);
-            if (result)
-            {
-                value = int.Parse(stringValue);
-            }
-            return result;
-        }
-
-        private static bool TryReadCG2Value(string line, string tag, ref string value)
-        {
-            int tagIndex = line.IndexOf(tag);
-            if (tagIndex >= 0)
-            {
-                int start = tagIndex + tag.Length;
-                int end = line.Length;
-                while (end > start && line[end - 1] == '#')
-                {
-                    end--;
-                }
-                while (end > start && char.IsWhiteSpace(line[end - 1]))
-                {
-                    end--;
-                }
-
-                value = line.Substring(start, end - start);
-                return true;
-            }
-            return false;
+            return "";
         }
 
         private static int Execute(
@@ -740,107 +683,222 @@ namespace ContPerf
             return RunProcess(psi, logFile, out stdout);
         }
 
-        private static void Run(string buildMode, string dockerImageId, bool useTieredCompilation, bool useReadyToRun,
+        private static void Run(string dockerImageId, bool useTieredCompilation, bool useReadyToRun,
             out Statistics stat, out List<string> jitMethods)
         {
-            s_execLogFile!.WriteLine("Running configuration: {0}", buildMode);
-
             jitMethods = new List<string>();
             stat = new Statistics();
 
-            int exitCode;
-            List<string> stdout;
-
-            exitCode = Execute(dockerImageId, collectMethods: true, useTieredCompilation: useTieredCompilation, useReadyToRun: useReadyToRun,
-                s_execLogFile!, out stdout);
-            if (exitCode != 0)
+            if (s_useCrank)
             {
-                return;
-            }
+                s_execLogFile!.WriteLine("Running crank ...");
 
-            for (int lineIndex = 0; lineIndex < stdout.Count; lineIndex++)
-            {
-                string line = stdout[lineIndex];
-                int jitIndex = line.IndexOf(JitCompiledTag);
-                if (jitIndex > 0)
+                string rewrittenConfigFile = RewriteConfigFile(s_crankConfigFile);
+
+                StringBuilder crankArgs = new StringBuilder();
+                crankArgs.AppendFormat("--config {0} ", rewrittenConfigFile);
+                crankArgs.AppendFormat("--scenario {0} ", s_crankScenario);
+                crankArgs.AppendFormat("--iterations {0} ", s_iterations);
+                crankArgs.AppendFormat("--profile aspnet-perf-{0} ", s_useLinux ? "lin" : "win");
+
+                ProcessStartInfo psi = new ProcessStartInfo()
                 {
-                    int methodPos = jitIndex + JitCompiledTag.Length;
-                    int numberEnd = jitIndex;
-                    while (jitIndex > 0 && char.IsDigit(line[jitIndex - 1]))
+                    FileName = "crank",
+                    Arguments = crankArgs.ToString(),
+                };
+
+                int exitCode = RunProcess(psi, s_execLogFile, out List<string> stdout);
+                if (exitCode != 0)
+                {
+                    throw new Exception($"Error running crank: {exitCode}");
+                }
+
+                int startTime = 0;
+                foreach (string line in stdout)
+                {
+                    const string StartTimeTag = "| Start Time (ms)     | ";
+                    if (line.StartsWith(StartTimeTag))
                     {
-                        jitIndex--;
-                    }
-                    int numberBegin = jitIndex;
-                    if (int.TryParse(line.AsSpan(numberBegin, numberEnd - numberBegin), out int methodIndex))
-                    {
-                        while (methodPos < line.Length && char.IsWhiteSpace(line[methodPos]))
+                        int numberStart = StartTimeTag.Length;
+                        int numberEnd = numberStart;
+                        while (numberEnd < line.Length && char.IsDigit(line[numberEnd]))
                         {
-                            methodPos++;
+                            numberEnd++;
                         }
-
-                        int methodEnd = methodPos;
-                        while (methodEnd < line.Length && line[methodEnd] >= ' ')
+                        if (numberEnd > numberStart)
                         {
-                            methodEnd++;
-                        }
-
-                        while (jitMethods.Count <= methodIndex)
-                        {
-                            jitMethods.Add("");
-                        }
-
-                        jitMethods[methodIndex] = line.Substring(methodPos, methodEnd - methodPos);
+                            startTime = int.Parse(line.AsSpan(numberStart, numberEnd - numberStart));                        }
                     }
                 }
+                stat.Add(startTime);
             }
-
-            exitCode = Execute(dockerImageId, collectMethods: false, useTieredCompilation: useTieredCompilation, useReadyToRun: useReadyToRun,
-                s_execLogFile!,
-                out stdout);
-            if (exitCode != 0)
+            else
             {
-                return;
-            }
+                s_execLogFile!.WriteLine("Running app...");
 
-            List<long> usecDurations = new List<long>();
-            int warmupIterationsLeft = WarmupIterations;
-            for (int lineIndex = 0; lineIndex < stdout.Count; lineIndex++)
-            {
-                string line = stdout[lineIndex];
-                const string USecsTag = "### USECS: ";
-                if (warmupIterationsLeft > 0)
+                int exitCode;
+                List<string> stdout;
+
+                exitCode = Execute(dockerImageId, collectMethods: true, useTieredCompilation: useTieredCompilation, useReadyToRun: useReadyToRun,
+                    s_execLogFile!, out stdout);
+                if (exitCode != 0)
                 {
-                    // Skip initial measurements corresponding to the warmup iterations
-                    warmupIterationsLeft--;
-                    continue;
+                    return;
                 }
-                int tagIndex = line.IndexOf(USecsTag);
-                if (tagIndex >= 0)
+
+                for (int lineIndex = 0; lineIndex < stdout.Count; lineIndex++)
                 {
-                    int start = tagIndex + USecsTag.Length;
-                    int iterationEnd = line.IndexOf('/', start);
-                    if (iterationEnd > start)
+                    string line = stdout[lineIndex];
+                    int jitIndex = line.IndexOf(JitCompiledTag);
+                    if (jitIndex > 0)
                     {
-                        int valueEnd = line.IndexOf('#', iterationEnd);
-                        if (valueEnd > iterationEnd)
+                        int methodPos = jitIndex + JitCompiledTag.Length;
+                        int numberEnd = jitIndex;
+                        while (jitIndex > 0 && char.IsDigit(line[jitIndex - 1]))
                         {
-                            int iteration = int.Parse(line.AsSpan(start, iterationEnd - start));
-                            if (iteration >= usecDurations.Count)
+                            jitIndex--;
+                        }
+                        int numberBegin = jitIndex;
+                        if (int.TryParse(line.AsSpan(numberBegin, numberEnd - numberBegin), out int methodIndex))
+                        {
+                            while (methodPos < line.Length && char.IsWhiteSpace(line[methodPos]))
                             {
-                                long duration = long.Parse(line.AsSpan(iterationEnd + 1, valueEnd - iterationEnd - 1));
-                                usecDurations.Add(duration);
+                                methodPos++;
+                            }
+
+                            int methodEnd = methodPos;
+                            while (methodEnd < line.Length && line[methodEnd] >= ' ')
+                            {
+                                methodEnd++;
+                            }
+
+                            while (jitMethods.Count <= methodIndex)
+                            {
+                                jitMethods.Add("");
+                            }
+
+                            jitMethods[methodIndex] = line.Substring(methodPos, methodEnd - methodPos);
+                        }
+                    }
+                }
+
+                exitCode = Execute(dockerImageId, collectMethods: false, useTieredCompilation: useTieredCompilation, useReadyToRun: useReadyToRun,
+                    s_execLogFile!,
+                    out stdout);
+                if (exitCode != 0)
+                {
+                    return;
+                }
+
+                List<long> usecDurations = new List<long>();
+                int warmupIterationsLeft = WarmupIterations;
+                for (int lineIndex = 0; lineIndex < stdout.Count; lineIndex++)
+                {
+                    string line = stdout[lineIndex];
+                    const string USecsTag = "### USECS: ";
+                    if (warmupIterationsLeft > 0)
+                    {
+                        // Skip initial measurements corresponding to the warmup iterations
+                        warmupIterationsLeft--;
+                        continue;
+                    }
+                    int tagIndex = line.IndexOf(USecsTag);
+                    if (tagIndex >= 0)
+                    {
+                        int start = tagIndex + USecsTag.Length;
+                        int iterationEnd = line.IndexOf('/', start);
+                        if (iterationEnd > start)
+                        {
+                            int valueEnd = line.IndexOf('#', iterationEnd);
+                            if (valueEnd > iterationEnd)
+                            {
+                                int iteration = int.Parse(line.AsSpan(start, iterationEnd - start));
+                                if (iteration >= usecDurations.Count)
+                                {
+                                    long duration = long.Parse(line.AsSpan(iterationEnd + 1, valueEnd - iterationEnd - 1));
+                                    usecDurations.Add(duration);
+                                }
                             }
                         }
                     }
                 }
+                stat = new Statistics(usecDurations);
             }
-            stat = new Statistics(usecDurations);
+
             s_execLogFile!.WriteLine("JITTED:  {0}", jitMethods.Count);
             s_execLogFile!.WriteLine("COUNT:   {0}", stat.Count);
             s_execLogFile!.WriteLine("AVERAGE: {0}", stat.Average);
             s_execLogFile!.WriteLine("MINIMUM: {0}", stat.Minimum);
             s_execLogFile!.WriteLine("MAXIMUM: {0}", stat.Maximum);
             s_execLogFile!.WriteLine("STDDEV:  {0}", stat.StandardDeviation);
+        }
+
+        private static string RewriteConfigFile(string configFile)
+        {
+            string[] executables = Directory.EnumerateFiles(s_appFolderName, "*.exe")
+                .Where(f => Path.GetFileNameWithoutExtension(f) != "createdump")
+                .ToArray();
+            if (executables.Length == 0)
+            {
+                throw new Exception($"Test executable not found in app folder {s_appFolderName}");
+            }
+            if (executables.Length > 1)
+            {
+                throw new Exception($"Multiple executables found in app folder {s_appFolderName}: {string.Join("; ", executables)}");
+            }
+
+            List<string> lines = new List<string>(File.ReadAllLines(configFile));
+            bool doneRepository = false;
+            bool doneArguments = false;
+            bool doneProject = false;
+            for (int index = 0; index < lines.Count; index++)
+            {
+                string line = lines[index];
+                int startIndex = 0;
+                while (startIndex < line.Length && char.IsWhiteSpace(line[startIndex]))
+                {
+                    startIndex++;
+                }
+                const string RepositoryTag = "repository: ";
+                const string ArgumentsTag = "arguments: ";
+                const string ProjectTag = "project: ";
+                if (!doneRepository && line.Length >= startIndex + RepositoryTag.Length && RepositoryTag == line.Substring(startIndex, RepositoryTag.Length))
+                {
+                    lines[index] = string.Concat(line.AsSpan(0, startIndex), "localFolder: ", s_appFolderName.Replace("\\", "\\\\"));
+                    doneRepository = true;
+                }
+                else if (!doneArguments && line.Length >= startIndex + ArgumentsTag.Length && ArgumentsTag == line.Substring(startIndex, ArgumentsTag.Length))
+                {
+                    lines.Insert(index, string.Concat(line.AsSpan(0, startIndex), "executable: " + Path.GetFileName(executables[0])));
+                    index++;
+                    doneArguments = true;
+                }
+                else if (!doneProject && line.Length >= startIndex + ProjectTag.Length && ProjectTag == line.Substring(startIndex, ProjectTag.Length))
+                {
+                    lines.RemoveAt(index);
+                    doneProject = true;
+                    index--;
+                }
+            }
+
+            if (!doneRepository)
+            {
+                throw new Exception($"Repository key not found in crank config file {s_crankConfigFile}");
+            }
+            if (!doneArguments)
+            {
+                throw new Exception($"Arguments key not found in crank config file {s_crankConfigFile}");
+            }
+            if (!doneProject)
+            {
+                throw new Exception($"Project key not found in crank config file {s_crankConfigFile}");
+            }
+
+            string tempConfigFile = Path.ChangeExtension(Path.GetTempFileName(), ".yml");
+            File.WriteAllLines(tempConfigFile, lines);
+            Console.WriteLine("Rewritten config file saved as: {0}", tempConfigFile);
+
+            return tempConfigFile;
         }
 
         private static int RunProcess(ProcessStartInfo psi, TextWriter logFile, out List<string> stdout)
