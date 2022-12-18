@@ -84,6 +84,7 @@ namespace ContPerf
         private readonly bool _useLinux;
         private readonly bool _useContainers;
         private readonly bool _buildFullComposite;
+        private readonly bool _emitMapFile;
         private readonly string _publishDir;
         private readonly string _appDir;
         private readonly string _compositeFileList;
@@ -101,6 +102,7 @@ namespace ContPerf
             bool useLinux,
             bool useContainers,
             bool buildFullComposite,
+            bool emitMapFile,
             string publishDir,
             string appDir,
             string compositeFileList,
@@ -111,6 +113,7 @@ namespace ContPerf
             _useLinux = useLinux;
             _useContainers = useContainers;
             _buildFullComposite = buildFullComposite;
+            _emitMapFile = emitMapFile;
             _publishDir = publishDir;
             _appDir = appDir;
             _compositeFileList = compositeFileList;
@@ -277,9 +280,13 @@ namespace ContPerf
             string fileArgs = "@" + responseFile;
             StringBuilder responseFileContent = new StringBuilder();
 
+            responseFileContent.AppendLine("--targetos:" + (_useLinux ? "linux" : "windows"));
             responseFileContent.AppendLine("-o:" + _compositeFileName);
             responseFileContent.AppendLine("-O");
-            responseFileContent.AppendLine("--mapcsv");
+            if (_emitMapFile)
+            {
+                responseFileContent.AppendLine("--mapcsv");
+            }
             responseFileContent.AppendLine($"-r:{_publishDir}\\*.dll");
             responseFileContent.AppendLine("--composite");
 

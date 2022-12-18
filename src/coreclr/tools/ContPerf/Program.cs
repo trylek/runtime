@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Runtime;
 using System.Runtime.InteropServices;
@@ -22,6 +23,8 @@ namespace ContPerf
         private const string JitCompiledTag = ": JIT compiled";
         private const int WarmupIterations = 2;
         private const int DefaultIterations = 2;
+        private const int CrankRetryAttempts = 3;
+        private const int MinFastCountToBisect = 40;
 
         private static bool s_useLinux;
         private static bool s_useCrank;
@@ -32,6 +35,7 @@ namespace ContPerf
         private static bool s_measureNegativeComposite;
         private static bool s_useFastMode;
         private static bool s_buildFullComposite;
+        private static bool s_emitMapFile;
         private static int? s_partialIndex;
         private static int s_iterations = DefaultIterations;
 
@@ -44,6 +48,8 @@ namespace ContPerf
             Iterations,
             CrankConfigFile,
             CrankScenario,
+            CrankApp,
+            AppName,
         }
 
         private static string? s_compositeFileList;
@@ -64,6 +70,8 @@ namespace ContPerf
         private static string s_logsFolderName = "";
         private static string s_crankConfigFile = "";
         private static string s_crankScenario = "";
+        private static string s_crankApp = "";
+        private static string s_appName = "";
 
         private static string? s_timestamp;
 
@@ -111,6 +119,16 @@ namespace ContPerf
                         nextArg = NextArg.Command;
                         break;
 
+                    case NextArg.CrankApp:
+                        s_crankApp = arg;
+                        nextArg = NextArg.Command;
+                        break;
+
+                    case NextArg.AppName:
+                        s_appName = arg;
+                        nextArg = NextArg.Command;
+                        break;
+
                     case NextArg.Command:
                         switch (arg)
                         {
@@ -119,8 +137,16 @@ namespace ContPerf
                                 nextArg = NextArg.CrankConfigFile;
                                 break;
 
+                            case "CRANKAPP":
+                                nextArg = NextArg.CrankApp;
+                                break;
+
                             case "FULL":
                                 s_buildFullComposite = true;
+                                break;
+
+                            case "MAP":
+                                s_emitMapFile = true;
                                 break;
 
                             case "LINUX":
@@ -162,6 +188,10 @@ namespace ContPerf
 
                             case "FAST":
                                 s_useFastMode = true;
+                                break;
+
+                            case "APP":
+                                nextArg = NextArg.AppName;
                                 break;
 
                             default:
@@ -461,7 +491,7 @@ namespace ContPerf
             {
                 bisect = true;
             }
-            if (s_useFastMode && high - low <= 100)
+            if (s_useFastMode && high - low <= MinFastCountToBisect)
             {
                 bisect = false;
             }
@@ -604,6 +634,7 @@ namespace ContPerf
                 useLinux: s_useLinux,
                 useContainers: s_useContainers,
                 buildFullComposite: s_buildFullComposite,
+                emitMapFile: s_emitMapFile,
                 s_publishFolderName,
                 s_appFolderName,
                 compositeFileList,
@@ -703,11 +734,21 @@ namespace ContPerf
 
                 ProcessStartInfo psi = new ProcessStartInfo()
                 {
-                    FileName = "crank",
+                    FileName = !string.IsNullOrEmpty(s_crankApp) ? s_crankApp : "crank",
                     Arguments = crankArgs.ToString(),
                 };
 
-                int exitCode = RunProcess(psi, s_execLogFile, out List<string> stdout);
+                int exitCode = 0;
+                List<string> stdout = new List<string>();
+                for (int crankRetryAttempt = 0; crankRetryAttempt < CrankRetryAttempts; crankRetryAttempt++)
+                {
+                    Console.WriteLine("Running crank: {0} {1}", psi.FileName, psi.Arguments);
+                    exitCode = RunProcess(psi, s_execLogFile, out stdout);
+                    if (exitCode == 0)
+                    {
+                        break;
+                    }
+                }
                 if (exitCode != 0)
                 {
                     throw new Exception($"Error running crank: {exitCode}");
@@ -835,16 +876,32 @@ namespace ContPerf
 
         private static string RewriteConfigFile(string configFile)
         {
-            string[] executables = Directory.EnumerateFiles(s_appFolderName, "*.exe")
-                .Where(f => Path.GetFileNameWithoutExtension(f) != "createdump")
-                .ToArray();
-            if (executables.Length == 0)
+            string executable = s_appName;
+            if (string.IsNullOrEmpty(executable))
             {
-                throw new Exception($"Test executable not found in app folder {s_appFolderName}");
-            }
-            if (executables.Length > 1)
-            {
-                throw new Exception($"Multiple executables found in app folder {s_appFolderName}: {string.Join("; ", executables)}");
+                List<string> executables = new List<string>();
+                foreach (string exeCandidate in Directory.EnumerateFiles(s_appFolderName, s_useLinux ? "*" : "*.exe"))
+                {
+                    string name = Path.GetFileName(exeCandidate);
+                    if (Path.GetFileNameWithoutExtension(name) == "createdump")
+                    {
+                        continue;
+                    }
+                    if (s_useLinux && name.Contains('.'))
+                    {
+                        continue;
+                    }
+                    executables.Add(name);
+                }
+                if (executables.Count == 0)
+                {
+                    throw new Exception($"Test executable not found in app folder {s_appFolderName}");
+                }
+                if (executables.Count > 1)
+                {
+                    throw new Exception($"Multiple executables found in app folder {s_appFolderName}: {string.Join("; ", executables)}");
+                }
+                executable = executables[0];
             }
 
             List<string> lines = new List<string>(File.ReadAllLines(configFile));
@@ -869,7 +926,7 @@ namespace ContPerf
                 }
                 else if (!doneArguments && line.Length >= startIndex + ArgumentsTag.Length && ArgumentsTag == line.Substring(startIndex, ArgumentsTag.Length))
                 {
-                    lines.Insert(index, string.Concat(line.AsSpan(0, startIndex), "executable: " + Path.GetFileName(executables[0])));
+                    lines.Insert(index, string.Concat(line.AsSpan(0, startIndex), "executable: " + Path.GetFileName(executable)));
                     index++;
                     doneArguments = true;
                 }
