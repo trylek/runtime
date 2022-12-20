@@ -13,6 +13,7 @@ using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -24,7 +25,8 @@ namespace ContPerf
         private const int WarmupIterations = 2;
         private const int DefaultIterations = 2;
         private const int CrankRetryAttempts = 3;
-        private const int MinFastCountToBisect = 40;
+        private const int CrankRetryDelayMilliseconds = 30000;
+        private const int MinFastCountToBisect = 10;
 
         private static bool s_useLinux;
         private static bool s_useCrank;
@@ -50,6 +52,7 @@ namespace ContPerf
             CrankScenario,
             CrankApp,
             AppName,
+            CsvOutputFile,
         }
 
         private static string? s_compositeFileList;
@@ -72,12 +75,15 @@ namespace ContPerf
         private static string s_crankScenario = "";
         private static string s_crankApp = "";
         private static string s_appName = "";
+        private static string s_csvOutputFile = "";
 
         private static string? s_timestamp;
 
         private static TextWriter? s_buildLogFile;
         private static TextWriter? s_execLogFile;
         private static TextWriter? s_resultsCsvFile;
+
+        private static Dictionary<int, CsvInfo> s_csvCache = new Dictionary<int, CsvInfo>();
 
         private static Stopwatch s_stopwatch = Stopwatch.StartNew();
 
@@ -129,6 +135,11 @@ namespace ContPerf
                         nextArg = NextArg.Command;
                         break;
 
+                    case NextArg.CsvOutputFile:
+                        s_csvOutputFile = arg;
+                        nextArg = NextArg.Command;
+                        break;
+
                     case NextArg.Command:
                         switch (arg)
                         {
@@ -139,6 +150,10 @@ namespace ContPerf
 
                             case "CRANKAPP":
                                 nextArg = NextArg.CrankApp;
+                                break;
+
+                            case "CSV":
+                                nextArg = NextArg.CsvOutputFile;
                                 break;
 
                             case "FULL":
@@ -211,6 +226,11 @@ namespace ContPerf
             s_appFolderName = Path.Combine(s_publishFolderName, "app");
             s_logsFolderName = Path.Combine(s_publishFolderName, "logs");
 
+            if (!string.IsNullOrEmpty(s_csvOutputFile) && File.Exists(s_csvOutputFile))
+            {
+                s_csvCache = CsvInfo.ParseCsvFile(s_csvOutputFile);
+            }
+
             Directory.CreateDirectory(s_logsFolderName);
 
             string buildLogFile = Path.Combine(s_logsFolderName, $"build-{s_timestamp}.log");
@@ -265,6 +285,12 @@ namespace ContPerf
             Console.WriteLine("Execution log: {0}", execLogFile);
             Console.WriteLine("Results xls:   {0}", resultsCsvFile);
 
+            if (!string.IsNullOrEmpty(s_csvOutputFile))
+            {
+                Console.WriteLine("Updating CSV file: {0}", s_csvOutputFile);
+                File.Copy(resultsCsvFile, s_csvOutputFile, overwrite: true);
+            }
+
             return 0;
         }
 
@@ -294,6 +320,7 @@ namespace ContPerf
             publishInfos[0] = firstPublishInfo;
             calculated[0] = true;
 
+
             // Build full composite
             BuildAndRun(totalFiles, totalFiles,
                 compositeFileList: s_compositeFileList!, compositeFileCount: totalFiles,
@@ -303,7 +330,14 @@ namespace ContPerf
             publishInfos[totalFiles] = fullPublishInfo;
             calculated[totalFiles] = true;
 
-            BisectPartialComposite(totalFiles, s_compositeFileList!, statistics, jitMethodCount, publishInfos, calculated, 0, totalFiles);
+            try
+            {
+                BisectPartialComposite(totalFiles, s_compositeFileList!, statistics, jitMethodCount, publishInfos, calculated, 0, totalFiles);
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine("Error: {0}", ex);
+            }
 
             s_execLogFile!.WriteLine("#COMPOSITE | PUBLISH SIZE | COMP-SIZE | SINGLE-SIZE | JIT COUNT | STARTUP USECS |       MIN |       MAX |    STDDEV");
             s_execLogFile!.WriteLine("-------------------------------------------------------------------------------------------------------------------");
@@ -529,6 +563,14 @@ namespace ContPerf
             string compositeFileList, int compositeFileCount, out Statistics stat, out List<string> jitMethods,
             out PublishInfo publishInfo)
         {
+            if (compositeFileCount != 0 && s_csvCache.TryGetValue(compositeFileCount, out CsvInfo? csvInfo))
+            {
+                publishInfo = csvInfo.Publish;
+                stat = csvInfo.Stat;
+                jitMethods = new List<string>();
+                return;
+            }
+
             string? image = Build(index, count,
                 compositeFileList, compositeFileCount, out publishInfo);
             if (image == null || s_iterations == 0)
@@ -748,6 +790,8 @@ namespace ContPerf
                     {
                         break;
                     }
+                    Console.WriteLine("Waiting for {0} milliseconds before retrying...", CrankRetryDelayMilliseconds);
+                    Thread.Sleep(CrankRetryDelayMilliseconds);
                 }
                 if (exitCode != 0)
                 {

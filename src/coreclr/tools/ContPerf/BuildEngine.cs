@@ -77,6 +77,74 @@ namespace ContPerf
         }
     }
 
+    public sealed class CsvInfo
+    {
+        public readonly PublishInfo Publish;
+        public readonly Statistics Stat;
+
+        public CsvInfo(PublishInfo publish, Statistics stat)
+        {
+            Publish = publish;
+            Stat = stat;
+        }
+
+        public static Dictionary<int, CsvInfo> ParseCsvFile(string filename)
+        {
+            Dictionary<int, CsvInfo> csvMap = new Dictionary<int, CsvInfo>();
+            using (StreamReader reader = new StreamReader(filename))
+            {
+                string[] columns = reader.ReadLine()!.Split(',');
+                int compositeCountIndex = -1;
+                int publishSizeIndex = -1;
+                int startupUsecsIndex = -1;
+                for (int columnIndex = 0; columnIndex < columns.Length; columnIndex++)
+                {
+                    switch (columns[columnIndex])
+                    {
+                        case "COMPOSITE":
+                            compositeCountIndex = columnIndex;
+                            break;
+
+                        case "PUBLISH_SIZE":
+                            publishSizeIndex = columnIndex;
+                            break;
+
+                        case "STARTUP_USECS":
+                            startupUsecsIndex = columnIndex;
+                            break;
+                    }
+                }
+
+                for (; ;)
+                {
+                    string? line = reader.ReadLine();
+                    if (line == null)
+                    {
+                        break;
+                    }
+                    string[] parts = line.Split(',');
+                    if (parts.Length > 0)
+                    {
+                        int compositeCount = (compositeCountIndex >= 0 && compositeCountIndex < parts.Length ? int.Parse(parts[compositeCountIndex]) : 0);
+                        int publishSize = (publishSizeIndex >= 0 && publishSizeIndex < parts.Length ? int.Parse(parts[publishSizeIndex]) : 0);
+                        int startupUsecs = (startupUsecsIndex >= 0 && startupUsecsIndex < parts.Length ? int.Parse(parts[startupUsecsIndex]) : 0);
+                        if (compositeCount > 0 || publishSize > 0 || startupUsecs > 0)
+                        {
+                            PublishInfo pubInfo = new PublishInfo()
+                            {
+                                CompositeFiles = compositeCount,
+                                TotalSize = publishSize
+                            };
+                            Statistics stat = new Statistics();
+                            stat.Add(startupUsecs);
+                            csvMap.Add(compositeCount, new CsvInfo(pubInfo, stat));
+                        }
+                    }
+                }
+            }
+            return csvMap;
+        }
+    }
 
     public sealed class BuildEngine
     {
