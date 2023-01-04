@@ -7,10 +7,11 @@ using System.IO;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Reflection.PortableExecutable;
-using System.Threading;
 
 namespace ContPerf
 {
@@ -93,14 +94,26 @@ namespace ContPerf
             Dictionary<int, CsvInfo> csvMap = new Dictionary<int, CsvInfo>();
             using (StreamReader reader = new StreamReader(filename))
             {
-                string[] columns = reader.ReadLine()!.Split(',');
+                string? firstLine = reader.ReadLine();
+                if (firstLine == null)
+                {
+                    return csvMap;
+                }
+                string[] columns = firstLine.Split(',');
+                int totalCountIndex = -1;
                 int compositeCountIndex = -1;
                 int publishSizeIndex = -1;
+                int compositeSizeIndex = -1;
+                int singleSizeIndex = -1;
                 int startupUsecsIndex = -1;
                 for (int columnIndex = 0; columnIndex < columns.Length; columnIndex++)
                 {
                     switch (columns[columnIndex])
                     {
+                        case "TOTAL":
+                            totalCountIndex = columnIndex;
+                            break;
+
                         case "COMPOSITE":
                             compositeCountIndex = columnIndex;
                             break;
@@ -109,13 +122,21 @@ namespace ContPerf
                             publishSizeIndex = columnIndex;
                             break;
 
+                        case "COMP_SIZE":
+                            compositeSizeIndex = columnIndex;
+                            break;
+
+                        case "SINGLE_SIZE":
+                            singleSizeIndex = columnIndex;
+                            break;
+
                         case "STARTUP_USECS":
                             startupUsecsIndex = columnIndex;
                             break;
                     }
                 }
 
-                for (; ;)
+                for (; ; )
                 {
                     string? line = reader.ReadLine();
                     if (line == null)
@@ -125,15 +146,22 @@ namespace ContPerf
                     string[] parts = line.Split(',');
                     if (parts.Length > 0)
                     {
+                        int totalCount = (totalCountIndex >= 0 && totalCountIndex < parts.Length ? int.Parse(parts[totalCountIndex]) : 0);
                         int compositeCount = (compositeCountIndex >= 0 && compositeCountIndex < parts.Length ? int.Parse(parts[compositeCountIndex]) : 0);
                         int publishSize = (publishSizeIndex >= 0 && publishSizeIndex < parts.Length ? int.Parse(parts[publishSizeIndex]) : 0);
+                        int compositeSize = (compositeSizeIndex >= 0 && compositeSizeIndex < parts.Length ? int.Parse(parts[compositeSizeIndex]) : 0);
+                        int singleSize = (singleSizeIndex >= 0 && singleSizeIndex < parts.Length ? int.Parse(parts[singleSizeIndex]) : 0);
                         int startupUsecs = (startupUsecsIndex >= 0 && startupUsecsIndex < parts.Length ? int.Parse(parts[startupUsecsIndex]) : 0);
-                        if (compositeCount > 0 || publishSize > 0 || startupUsecs > 0)
+                        if (compositeCount > 0 || publishSize > 0 || compositeSize > 0 || singleSize > 0 || startupUsecs > 0)
                         {
                             PublishInfo pubInfo = new PublishInfo()
                             {
+                                TotalFiles = totalCount,
                                 CompositeFiles = compositeCount,
-                                TotalSize = publishSize
+                                SingleFiles = totalCount - compositeCount,
+                                TotalSize = publishSize,
+                                CompositeSize = compositeSize,
+                                SingleSize = singleSize,
                             };
                             Statistics stat = new Statistics();
                             stat.Add(startupUsecs);
@@ -153,6 +181,7 @@ namespace ContPerf
         private readonly bool _useContainers;
         private readonly bool _buildFullComposite;
         private readonly bool _emitMapFile;
+        private readonly bool _useCrossModuleInlining;
         private readonly string _publishDir;
         private readonly string _appDir;
         private readonly string _compositeFileList;
@@ -171,6 +200,7 @@ namespace ContPerf
             bool useContainers,
             bool buildFullComposite,
             bool emitMapFile,
+            bool useCrossModuleInlining,
             string publishDir,
             string appDir,
             string compositeFileList,
@@ -182,6 +212,7 @@ namespace ContPerf
             _useContainers = useContainers;
             _buildFullComposite = buildFullComposite;
             _emitMapFile = emitMapFile;
+            _useCrossModuleInlining= useCrossModuleInlining;
             _publishDir = publishDir;
             _appDir = appDir;
             _compositeFileList = compositeFileList;
@@ -198,18 +229,32 @@ namespace ContPerf
             PrepareAppFolder();
             LoadCompositeAssemblies();
             SelectAssembliesForCompilation();
-            if (_compositeFiles.Count > 0)
+
+            if (_useCrossModuleInlining)
             {
-                RunCrossgen2();
+                Parallel.ForEach(_singleFiles, (dll) =>
+                    {
+                        RunCrossgen2(
+                            composite: false,
+                            output: Path.Combine(_appDir, Path.GetFileName(dll)),
+                            inputs: new string[] { dll },
+                            unrootedInputs: Array.Empty<string>());
+                    }
+                );
             }
+            else if (_compositeFiles.Count > 0 || _buildFullComposite)
+            {
+                CompileCompositeImage();
+            }
+
             publishInfo = new PublishInfo();
             publishInfo.SingleFiles = _singleFiles.Count;
             publishInfo.CompositeFiles = _compositeFiles.Count;
             publishInfo.SingleAssemblies = _singleFiles;
             publishInfo.CompositeAssemblies = _compositeFiles;
             publishInfo.TotalFiles = _singleFiles.Count + _compositeFiles.Count;
-            publishInfo.SingleSize = _singleFiles.Sum(f => new FileInfo(f).Length);
-            publishInfo.CompositeSize = _compositeFiles.Sum(f => new FileInfo(f).Length)
+            publishInfo.SingleSize = _singleFiles.Sum(f => new FileInfo(Path.Combine(_appDir, Path.GetFileName(f))).Length);
+            publishInfo.CompositeSize = _compositeFiles.Sum(f => new FileInfo(Path.Combine(_appDir, Path.GetFileName(f))).Length)
                 + (_compositeFileName != null ? new FileInfo(_compositeFileName).Length : 0);
             publishInfo.TotalSize = publishInfo.SingleSize + publishInfo.CompositeSize;
         }
@@ -326,9 +371,10 @@ namespace ContPerf
             for (int index = 0; index < dllsBySize.Length; index++)
             {
                 string dll = dllsBySize[index];
-                if (_compositeAssemblies == null ||
-                    index < _compositeFileCount ||
-                    _compositeFileCount < 0 && index != ~_compositeFileCount)
+                if (!_useCrossModuleInlining &&
+                    (_compositeAssemblies == null ||
+                        index < _compositeFileCount ||
+                        _compositeFileCount < 0 && index != ~_compositeFileCount))
                 {
                     _compositeFiles.Add(dll);
                 }
@@ -339,39 +385,64 @@ namespace ContPerf
             }
         }
 
-        private void RunCrossgen2()
+        private void CompileCompositeImage()
         {
-            string compositeName = "composite." + Path.GetFileNameWithoutExtension(_compositeFiles[0]) + ".dll";
+            string compositeName = "composite." + Path.GetFileNameWithoutExtension(_compositeFiles.Count > 0 ? _compositeFiles[0] : _singleFiles[0]) + ".dll";
             _compositeFileName = Path.Combine(_appDir, compositeName);
+            Console.WriteLine("Compiling composite image {0}", _compositeFileName);
+            RunCrossgen2(
+                composite: true,
+                output: _compositeFileName,
+                inputs: _compositeFiles,
+                unrootedInputs: _singleFiles);
+        }
 
-            string responseFile = _compositeFileName + ".rsp";
+        private void RunCrossgen2(
+            bool composite,
+            string output,
+            IEnumerable<string> inputs,
+            IEnumerable<string> unrootedInputs)
+        {
+            string responseFile = output + ".rsp";
             string fileArgs = "@" + responseFile;
             StringBuilder responseFileContent = new StringBuilder();
 
             responseFileContent.AppendLine("--targetos:" + (_useLinux ? "linux" : "windows"));
-            responseFileContent.AppendLine("-o:" + _compositeFileName);
+            responseFileContent.AppendLine("-o:" + output);
             responseFileContent.AppendLine("-O");
+            if (_useCrossModuleInlining)
+            {
+                responseFileContent.AppendLine("--opt-cross-module:*");
+                responseFileContent.AppendLine("--opt-async-methods");
+            }
             if (_emitMapFile)
             {
                 responseFileContent.AppendLine("--mapcsv");
             }
             responseFileContent.AppendLine($"-r:{_publishDir}\\*.dll");
-            responseFileContent.AppendLine("--composite");
+            if (composite)
+            {
+                responseFileContent.AppendLine("--composite");
+            }
 
-            foreach (string dll in _compositeFiles)
+            foreach (string dll in inputs)
             {
                 responseFileContent.AppendLine(dll);
             }
 
             if (_buildFullComposite)
             {
-                foreach (string singleDll in _singleFiles)
+                foreach (string singleDll in unrootedInputs)
                 {
                     responseFileContent.AppendLine("-u:" + singleDll);
                 }
+                string? lastUnrootedInput = unrootedInputs.LastOrDefault();
+                if (!string.IsNullOrEmpty(lastUnrootedInput))
+                {
+                    responseFileContent.AppendLine(lastUnrootedInput);
+                }
             }
 
-            Console.WriteLine("Compiling composite image {0}", _compositeFileName);
             Console.WriteLine("Running: {0} {1}", _crossgen2Path, fileArgs);
             Console.WriteLine(responseFileContent.ToString());
             File.WriteAllText(responseFile, responseFileContent.ToString());
@@ -387,7 +458,7 @@ namespace ContPerf
                 cg2Process.WaitForExit();
                 if (cg2Process.ExitCode != 0)
                 {
-                    throw new Exception($"Error compiling composite image '{_compositeFileName}'");
+                    throw new Exception($"Error compiling composite image '{output}'");
                 }
             }
         }

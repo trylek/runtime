@@ -30,11 +30,13 @@ namespace ContPerf
 
         private static bool s_useLinux;
         private static bool s_useCrank;
+        private static bool s_logJitSummary;
         private static bool s_useReadyToRun = true;
         private static bool s_useTieredCompilation;
         private static bool s_useContainers = true;
         private static bool s_usePartialComposite;
         private static bool s_measureNegativeComposite;
+        private static bool s_useCrossModuleInlining;
         private static bool s_useFastMode;
         private static bool s_buildFullComposite;
         private static bool s_emitMapFile;
@@ -143,6 +145,10 @@ namespace ContPerf
                     case NextArg.Command:
                         switch (arg)
                         {
+                            case "CMI":
+                                s_useCrossModuleInlining = true;
+                                break;
+
                             case "CRANK":
                                 s_useCrank = true;
                                 nextArg = NextArg.CrankConfigFile;
@@ -170,6 +176,10 @@ namespace ContPerf
 
                             case "WINDOWS":
                                 s_useLinux = false;
+                                break;
+
+                            case "JIT":
+                                s_logJitSummary = true;
                                 break;
 
                             case "NORTR":
@@ -339,9 +349,9 @@ namespace ContPerf
                 Console.WriteLine("Error: {0}", ex);
             }
 
-            s_execLogFile!.WriteLine("#COMPOSITE | PUBLISH SIZE | COMP-SIZE | SINGLE-SIZE | JIT COUNT | STARTUP USECS |       MIN |       MAX |    STDDEV");
-            s_execLogFile!.WriteLine("-------------------------------------------------------------------------------------------------------------------");
-            s_resultsCsvFile!.WriteLine("COMPOSITE,PUBLISH_SIZE,COMP_SIZE,SINGLE_SIZE,JIT_COUNT,STARTUP_USECS,MIN,MAX,STDDEV");
+            s_execLogFile!.WriteLine("#TOTAL    | #COMPOSITE | PUBLISH SIZE | COMP-SIZE | SINGLE-SIZE | JIT COUNT | STARTUP USECS |       MIN |       MAX |    STDDEV");
+            s_execLogFile!.WriteLine("-------------------------------------------------------------------------------------------------------------------------------");
+            s_resultsCsvFile!.WriteLine("TOTAL,COMPOSITE,PUBLISH_SIZE,COMP_SIZE,SINGLE_SIZE,JIT_COUNT,STARTUP_USECS,MIN,MAX,STDDEV");
             for (int index = 0; index <= totalFiles; index++)
             {
                 PublishInfo info = publishInfos[index];
@@ -349,7 +359,8 @@ namespace ContPerf
                 if (stat != null)
                 {
                     s_execLogFile!.WriteLine(
-                        "{0,10} | {1,12} | {2,9} | {3,11} | {4,9} | {5,13} | {6,9} | {7,9} | {8,9}",
+                        "{0,9} | {1,10} | {2,12} | {3,9} | {4,11} | {5,9} | {6,13} | {7,9} | {8,9} | {9,9}",
+                        info.TotalFiles,
                         index,
                         info.TotalSize,
                         info.CompositeSize,
@@ -361,7 +372,8 @@ namespace ContPerf
                         stat.StandardDeviation);
 
                     s_resultsCsvFile!.WriteLine(
-                        "{0},{1},{2},{3},{4},{5},{6},{7},{8}",
+                        "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9}",
+                        info.TotalFiles,
                         index,
                         info.TotalSize,
                         info.CompositeSize,
@@ -563,7 +575,7 @@ namespace ContPerf
             string compositeFileList, int compositeFileCount, out Statistics stat, out List<string> jitMethods,
             out PublishInfo publishInfo)
         {
-            if (compositeFileCount != 0 && s_csvCache.TryGetValue(compositeFileCount, out CsvInfo? csvInfo))
+            if (s_csvCache.TryGetValue(compositeFileCount, out CsvInfo? csvInfo))
             {
                 publishInfo = csvInfo.Publish;
                 stat = csvInfo.Stat;
@@ -573,7 +585,7 @@ namespace ContPerf
 
             string? image = Build(index, count,
                 compositeFileList, compositeFileCount, out publishInfo);
-            if (image == null || s_iterations == 0)
+            if (image == null || (s_iterations == 0 && !s_useCrank))
             {
                 stat = new Statistics();
                 jitMethods = new List<string>();
@@ -677,6 +689,7 @@ namespace ContPerf
                 useContainers: s_useContainers,
                 buildFullComposite: s_buildFullComposite,
                 emitMapFile: s_emitMapFile,
+                useCrossModuleInlining: s_useCrossModuleInlining,
                 s_publishFolderName,
                 s_appFolderName,
                 compositeFileList,
@@ -766,13 +779,38 @@ namespace ContPerf
             {
                 s_execLogFile!.WriteLine("Running crank ...");
 
-                string rewrittenConfigFile = RewriteConfigFile(s_crankConfigFile);
-
                 StringBuilder crankArgs = new StringBuilder();
-                crankArgs.AppendFormat("--config {0} ", rewrittenConfigFile);
-                crankArgs.AppendFormat("--scenario {0} ", s_crankScenario);
-                crankArgs.AppendFormat("--iterations {0} ", s_iterations);
-                crankArgs.AppendFormat("--profile aspnet-perf-{0} ", s_useLinux ? "lin" : "win");
+                crankArgs.AppendFormat(" --config {0}", s_crankConfigFile);
+                crankArgs.AppendFormat(" --application.source.project \"\"");
+                crankArgs.AppendFormat(" --application.source.repository \"\"");
+                crankArgs.AppendFormat(" --application.source.localFolder " + s_appFolderName);
+                crankArgs.AppendFormat(" --application.executable " + LocateExecutable());
+                crankArgs.AppendFormat(" --scenario {0}", s_crankScenario);
+                int executionCount;
+                if (s_logJitSummary)
+                {
+                    crankArgs.AppendFormat(" --application.environmentVariables DOTNET_JitDisasmSummary=1");
+                    crankArgs.AppendFormat(" --load.environmentVariables DOTNET_JitDisasmSummary=1");
+                    crankArgs.AppendFormat(" --variable warmup=0");
+                    crankArgs.AppendFormat(" --variable duration=0");
+                    executionCount = s_iterations;
+                }
+                else
+                {
+                    executionCount = 1;
+                    if (s_iterations != 0)
+                    {
+                        crankArgs.AppendFormat(" --iterations {0}", s_iterations);
+                    }
+                    else
+                    {
+                        crankArgs.AppendFormat(" --iterations 1"); ;
+                        crankArgs.AppendFormat(" --variable warmup=0");
+                        crankArgs.AppendFormat(" --variable duration=0");
+                    }
+                }
+                crankArgs.AppendFormat(" --profile aspnet-perf-{0}", s_useLinux ? "lin" : "win");
+                crankArgs.AppendFormat(" --profile short");
 
                 ProcessStartInfo psi = new ProcessStartInfo()
                 {
@@ -780,18 +818,24 @@ namespace ContPerf
                     Arguments = crankArgs.ToString(),
                 };
 
+                int successCount = 0;
+                int failureCount = 0;
                 int exitCode = 0;
                 List<string> stdout = new List<string>();
-                for (int crankRetryAttempt = 0; crankRetryAttempt < CrankRetryAttempts; crankRetryAttempt++)
+                while (failureCount < CrankRetryAttempts && successCount < executionCount)
                 {
                     Console.WriteLine("Running crank: {0} {1}", psi.FileName, psi.Arguments);
                     exitCode = RunProcess(psi, s_execLogFile, out stdout);
                     if (exitCode == 0)
                     {
-                        break;
+                        successCount++;
                     }
-                    Console.WriteLine("Waiting for {0} milliseconds before retrying...", CrankRetryDelayMilliseconds);
-                    Thread.Sleep(CrankRetryDelayMilliseconds);
+                    else
+                    {
+                        failureCount++;
+                        Console.WriteLine("Waiting for {0} milliseconds before retrying...", CrankRetryDelayMilliseconds);
+                        Thread.Sleep(CrankRetryDelayMilliseconds);
+                    }
                 }
                 if (exitCode != 0)
                 {
@@ -918,7 +962,7 @@ namespace ContPerf
             s_execLogFile!.WriteLine("STDDEV:  {0}", stat.StandardDeviation);
         }
 
-        private static string RewriteConfigFile(string configFile)
+        private static string LocateExecutable()
         {
             string executable = s_appName;
             if (string.IsNullOrEmpty(executable))
@@ -947,6 +991,10 @@ namespace ContPerf
                 }
                 executable = executables[0];
             }
+            return executable;
+        }
+
+        /*
 
             List<string> lines = new List<string>(File.ReadAllLines(configFile));
             bool doneRepository = false;
@@ -1001,6 +1049,7 @@ namespace ContPerf
 
             return tempConfigFile;
         }
+        */
 
         private static int RunProcess(ProcessStartInfo psi, TextWriter logFile, out List<string> stdout)
         {
