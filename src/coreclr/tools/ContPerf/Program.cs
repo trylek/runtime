@@ -441,14 +441,6 @@ namespace ContPerf
                 compositeFileList, compositeFileIndex,
                 out Statistics stat, out List<string> jitMethods, out PublishInfo publishInfo);
 
-            s_buildLogFile!.WriteLine("Composite file list: {0}", compositeFileList);
-            s_buildLogFile!.WriteLine("Composite index:     {0}", compositeFileIndex);
-            s_buildLogFile!.WriteLine("Publish size:        {0}", publishInfo.TotalSize);
-            s_buildLogFile!.WriteLine("Composite size:      {0}", publishInfo.CompositeSize);
-            s_buildLogFile!.WriteLine("Single size:         {0}", publishInfo.SingleSize);
-            s_buildLogFile!.WriteLine("Total files:         {0}", publishInfo.TotalFiles);
-            s_buildLogFile!.WriteLine("Composite files:     {0}", publishInfo.CompositeFiles);
-            s_buildLogFile!.WriteLine("Single files:        {0}", publishInfo.SingleFiles);
             s_buildLogFile!.WriteLine("Startup time AVG:    {0}", stat.Average);
             s_buildLogFile!.WriteLine("Startup time MIN:    {0}", stat.Minimum);
             s_buildLogFile!.WriteLine("Startup time MAX:    {0}", stat.Maximum);
@@ -696,6 +688,15 @@ namespace ContPerf
                 compositeFileCount,
                 s_buildLogFile)
                 .Build(out publishInfo);
+
+            s_buildLogFile!.WriteLine("Composite file list: {0}", compositeFileList);
+            s_buildLogFile!.WriteLine("Composite index:     {0}", compositeFileCount);
+            s_buildLogFile!.WriteLine("Publish size:        {0}", publishInfo.TotalSize);
+            s_buildLogFile!.WriteLine("Composite size:      {0}", publishInfo.CompositeSize);
+            s_buildLogFile!.WriteLine("Single size:         {0}", publishInfo.SingleSize);
+            s_buildLogFile!.WriteLine("Total files:         {0}", publishInfo.TotalFiles);
+            s_buildLogFile!.WriteLine("Composite files:     {0}", publishInfo.CompositeFiles);
+            s_buildLogFile!.WriteLine("Single files:        {0}", publishInfo.SingleFiles);
 
             return "";
         }
