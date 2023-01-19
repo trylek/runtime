@@ -29,6 +29,15 @@ namespace ContPerf
         public List<string> CompositeAssemblies = new List<string>();
     }
 
+    public class ExecutionInfo
+    {
+        public Statistics StartTimeUsecs = new Statistics();
+        public Statistics WorkingSetMB = new Statistics();
+        public Statistics PrivateMemoryMB = new Statistics();
+
+        public List<string> JittedMethods = new List<string>();
+    }
+
     public class Statistics
     {
         private long _count;
@@ -81,9 +90,9 @@ namespace ContPerf
     public sealed class CsvInfo
     {
         public readonly PublishInfo Publish;
-        public readonly Statistics Stat;
+        public readonly ExecutionInfo Stat;
 
-        public CsvInfo(PublishInfo publish, Statistics stat)
+        public CsvInfo(PublishInfo publish, ExecutionInfo stat)
         {
             Publish = publish;
             Stat = stat;
@@ -106,6 +115,8 @@ namespace ContPerf
                 int compositeSizeIndex = -1;
                 int singleSizeIndex = -1;
                 int startupUsecsIndex = -1;
+                int workingSetMBIndex = -1;
+                int privateMemoryMBIndex = -1;
                 for (int columnIndex = 0; columnIndex < columns.Length; columnIndex++)
                 {
                     switch (columns[columnIndex])
@@ -133,6 +144,14 @@ namespace ContPerf
                         case "STARTUP_USECS":
                             startupUsecsIndex = columnIndex;
                             break;
+
+                        case "WORKING_SET_MB":
+                            workingSetMBIndex = columnIndex;
+                            break;
+
+                        case "PRIVATE_MEMORY_MB":
+                            privateMemoryMBIndex = columnIndex;
+                            break;
                     }
                 }
 
@@ -146,13 +165,26 @@ namespace ContPerf
                     string[] parts = line.Split(',');
                     if (parts.Length > 0)
                     {
-                        int totalCount = (totalCountIndex >= 0 && totalCountIndex < parts.Length ? int.Parse(parts[totalCountIndex]) : 0);
-                        int compositeCount = (compositeCountIndex >= 0 && compositeCountIndex < parts.Length ? int.Parse(parts[compositeCountIndex]) : 0);
-                        int publishSize = (publishSizeIndex >= 0 && publishSizeIndex < parts.Length ? int.Parse(parts[publishSizeIndex]) : 0);
-                        int compositeSize = (compositeSizeIndex >= 0 && compositeSizeIndex < parts.Length ? int.Parse(parts[compositeSizeIndex]) : 0);
-                        int singleSize = (singleSizeIndex >= 0 && singleSizeIndex < parts.Length ? int.Parse(parts[singleSizeIndex]) : 0);
-                        int startupUsecs = (startupUsecsIndex >= 0 && startupUsecsIndex < parts.Length ? int.Parse(parts[startupUsecsIndex]) : 0);
-                        if (compositeCount > 0 || publishSize > 0 || compositeSize > 0 || singleSize > 0 || startupUsecs > 0)
+                        int totalCount = (totalCountIndex >= 0 && totalCountIndex < parts.Length ? int.Parse(parts[totalCountIndex]) : int.MinValue);
+                        int compositeCount = (compositeCountIndex >= 0 && compositeCountIndex < parts.Length ? int.Parse(parts[compositeCountIndex]) : int.MinValue);
+                        int publishSize = (publishSizeIndex >= 0 && publishSizeIndex < parts.Length ? int.Parse(parts[publishSizeIndex]) : int.MinValue);
+                        int compositeSize = (compositeSizeIndex >= 0 && compositeSizeIndex < parts.Length ? int.Parse(parts[compositeSizeIndex]) : int.MinValue);
+                        int singleSize = (singleSizeIndex >= 0 && singleSizeIndex < parts.Length ? int.Parse(parts[singleSizeIndex]) : int.MinValue);
+
+                        ExecutionInfo stat = new ExecutionInfo();
+                        if (startupUsecsIndex >= 0 && startupUsecsIndex < parts.Length)
+                        {
+                            stat.StartTimeUsecs.Add(int.Parse(parts[startupUsecsIndex]));
+                        }
+                        if (workingSetMBIndex >= 0 && workingSetMBIndex < parts.Length)
+                        {
+                            stat.WorkingSetMB.Add(int.Parse(parts[workingSetMBIndex]));
+                        }
+                        if (privateMemoryMBIndex >= 0 && privateMemoryMBIndex < parts.Length)
+                        {
+                            stat.PrivateMemoryMB.Add(int.Parse(parts[privateMemoryMBIndex]));
+                        }
+                        if (compositeCount > 0 || publishSize > 0 || compositeSize > 0 || singleSize > 0)
                         {
                             PublishInfo pubInfo = new PublishInfo()
                             {
@@ -163,8 +195,6 @@ namespace ContPerf
                                 CompositeSize = compositeSize,
                                 SingleSize = singleSize,
                             };
-                            Statistics stat = new Statistics();
-                            stat.Add(startupUsecs);
                             csvMap.Add(compositeCount, new CsvInfo(pubInfo, stat));
                         }
                     }

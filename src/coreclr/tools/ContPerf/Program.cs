@@ -247,8 +247,7 @@ namespace ContPerf
             string execLogFile = Path.Combine(s_logsFolderName, $"run-{s_timestamp}.log");
             string resultsCsvFile = Path.Combine(s_logsFolderName, $"results-{s_timestamp}.csv");
 
-            Statistics[] results = new Statistics[s_buildModes.Length];
-            List<string>[] jitMethods = new List<string>[s_buildModes.Length];
+            ExecutionInfo[] results = new ExecutionInfo[s_buildModes.Length];
 
             using (StreamWriter buildLogWriter = new StreamWriter(buildLogFile))
             using (StreamWriter execLogWriter = new StreamWriter(execLogFile))
@@ -267,7 +266,7 @@ namespace ContPerf
                     {
                         BuildAndRun(modeIndex, s_buildModes.Length,
                             compositeFileList: "", compositeFileCount: 0,
-                            out results[modeIndex], out jitMethods[modeIndex],
+                            out results[modeIndex],
                             out PublishInfo publishInfo);
                     }
 
@@ -275,13 +274,13 @@ namespace ContPerf
                     s_execLogFile.WriteLine("------------------------------------------------");
                     for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
                     {
-                        Statistics result = results[modeIndex];
-                        long averagePercentage = (result.Average * 100L / Math.Max(results[0].Average, 1));
+                        ExecutionInfo result = results[modeIndex];
+                        long averagePercentage = (result.StartTimeUsecs.Average * 100L / Math.Max(results[0].StartTimeUsecs.Average, 1));
                         s_execLogFile.WriteLine("{0,8} | {1,8} | {2,8} | {3,8} | {4}",
-                            result.Count,
+                            result.StartTimeUsecs.Count,
                             averagePercentage,
-                            result.Average,
-                            jitMethods[modeIndex].Count,
+                            result.StartTimeUsecs.Average,
+                            result.JittedMethods.Count,
                             s_buildModes[modeIndex]);
                     }
                 }
@@ -318,15 +317,13 @@ namespace ContPerf
                 return;
             }
 
-            BuildAndRun(0, 1, "", 0, out Statistics firstPartialStat, out List<string> firstPartialMethods, out PublishInfo firstPublishInfo);
+            BuildAndRun(0, 1, "", 0, out ExecutionInfo firstExecInfo, out PublishInfo firstPublishInfo);
             int totalFiles = firstPublishInfo.TotalFiles;
-            Statistics[] statistics = new Statistics[totalFiles + 1];
-            int[] jitMethodCount = new int[totalFiles + 1];
+            ExecutionInfo[] statistics = new ExecutionInfo[totalFiles + 1];
             PublishInfo[] publishInfos = new PublishInfo[totalFiles + 1];
             bool[] calculated = new bool[totalFiles + 1];
 
-            statistics[0] = firstPartialStat;
-            jitMethodCount[0] = firstPartialMethods.Count;
+            statistics[0] = firstExecInfo;
             publishInfos[0] = firstPublishInfo;
             calculated[0] = true;
 
@@ -334,55 +331,52 @@ namespace ContPerf
             // Build full composite
             BuildAndRun(totalFiles, totalFiles,
                 compositeFileList: s_compositeFileList!, compositeFileCount: totalFiles,
-                out Statistics fullStat, out List<string> fullMethods, out PublishInfo fullPublishInfo);
-            statistics[totalFiles] = fullStat;
-            jitMethodCount[totalFiles] = fullMethods.Count;
+                out ExecutionInfo fullExecInfo, out PublishInfo fullPublishInfo);
+            statistics[totalFiles] = fullExecInfo;
             publishInfos[totalFiles] = fullPublishInfo;
             calculated[totalFiles] = true;
 
             try
             {
-                BisectPartialComposite(totalFiles, s_compositeFileList!, statistics, jitMethodCount, publishInfos, calculated, 0, totalFiles);
+                BisectPartialComposite(totalFiles, s_compositeFileList!, statistics, publishInfos, calculated, 0, totalFiles);
             }
             catch(Exception ex)
             {
                 Console.WriteLine("Error: {0}", ex);
             }
 
-            s_execLogFile!.WriteLine("#TOTAL    | #COMPOSITE | PUBLISH SIZE | COMP-SIZE | SINGLE-SIZE | JIT COUNT | STARTUP USECS |       MIN |       MAX |    STDDEV");
-            s_execLogFile!.WriteLine("-------------------------------------------------------------------------------------------------------------------------------");
-            s_resultsCsvFile!.WriteLine("TOTAL,COMPOSITE,PUBLISH_SIZE,COMP_SIZE,SINGLE_SIZE,JIT_COUNT,STARTUP_USECS,MIN,MAX,STDDEV");
+            s_execLogFile!.WriteLine("#TOTAL    | #COMPOSITE | PUBLISH SIZE | COMP-SIZE | SINGLE-SIZE | JIT COUNT | STARTUP USECS | WORKING SET | PRIVATE MEMORY");
+            s_execLogFile!.WriteLine("--------------------------------------------------------------------------------------------------------------------------");
+            s_resultsCsvFile!.WriteLine("TOTAL,COMPOSITE,PUBLISH_SIZE,COMP_SIZE,SINGLE_SIZE,JIT_COUNT,STARTUP_USECS,WORKING_SET_MB,PRIVATE_MEMORY_MB");
             for (int index = 0; index <= totalFiles; index++)
             {
                 PublishInfo info = publishInfos[index];
-                Statistics stat = statistics[index];
+                ExecutionInfo stat = statistics[index];
                 if (stat != null)
                 {
                     s_execLogFile!.WriteLine(
-                        "{0,9} | {1,10} | {2,12} | {3,9} | {4,11} | {5,9} | {6,13} | {7,9} | {8,9} | {9,9}",
+                        "{0,9} | {1,10} | {2,12} | {3,9} | {4,11} | {5,9} | {6,13} | {7,11} | {8,14}",
                         info.TotalFiles,
                         index,
                         info.TotalSize,
                         info.CompositeSize,
                         info.SingleSize,
-                        jitMethodCount[index],
-                        stat.Average,
-                        stat.Minimum,
-                        stat.Maximum,
-                        stat.StandardDeviation);
+                        stat.JittedMethods.Count,
+                        stat.StartTimeUsecs.Minimum,
+                        stat.WorkingSetMB.Maximum,
+                        stat.PrivateMemoryMB.Maximum);
 
                     s_resultsCsvFile!.WriteLine(
-                        "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9}",
+                        "{0},{1},{2},{3},{4},{5},{6},{7},{8}",
                         info.TotalFiles,
                         index,
                         info.TotalSize,
                         info.CompositeSize,
                         info.SingleSize,
-                        jitMethodCount[index],
-                        stat.Average,
-                        stat.Minimum,
-                        stat.Maximum,
-                        stat.StandardDeviation);
+                        stat.JittedMethods.Count,
+                        stat.StartTimeUsecs.Minimum,
+                        stat.WorkingSetMB.Maximum,
+                        stat.PrivateMemoryMB.Maximum);
                 }
             }
         }
@@ -392,8 +386,7 @@ namespace ContPerf
             // Build full composite
             BuildAndRun(1, 1,
                 compositeFileList: s_compositeFileList!, compositeFileCount: int.MaxValue,
-                out Statistics fullStat,
-                out List<string> fullMethods,
+                out ExecutionInfo fullStat,
                 out PublishInfo fullPublishInfo);
             int totalFiles = fullPublishInfo.CompositeFiles;
             if (s_useFastMode)
@@ -401,18 +394,16 @@ namespace ContPerf
                 totalFiles = Math.Min(totalFiles, 10);
             }
             PublishInfo[] publishInfo = new PublishInfo[totalFiles + 1];
-            Statistics[] statistics = new Statistics[totalFiles + 1];
-            List<string>[] jitMethods = new List<string>[totalFiles + 1];
+            ExecutionInfo[] statistics = new ExecutionInfo[totalFiles + 1];
 
             publishInfo[0] = fullPublishInfo;
             statistics[0] = fullStat;
-            jitMethods[0] = fullMethods;
 
             for (int i = 0; i < totalFiles; i++)
             {
                 BuildAndRun(i, totalFiles,
                     s_compositeFileList!, compositeFileCount: ~i,
-                    out statistics[i + 1], out jitMethods[i + 1], out publishInfo[i + 1]);
+                    out statistics[i + 1], out publishInfo[i + 1]);
                 ShowProgress(i + 1, totalFiles);
             }
 
@@ -420,16 +411,15 @@ namespace ContPerf
             for (int i = 0; i <= totalFiles; i++)
             {
                 PublishInfo info = publishInfo[i];
-                Statistics stat = statistics[i];
-                List<string> methods = jitMethods[i];
+                ExecutionInfo stat = statistics[i];
                 s_resultsCsvFile!.WriteLine("{0},{1:F6},{2:F6},{3},{4:F6},{5:F6},{6},{7},",
                     i,
                     info.TotalSize,
-                    stat.Minimum,
-                    methods.Count,
+                    stat.StartTimeUsecs.Minimum,
+                    stat.JittedMethods.Count,
                     (info.TotalSize - fullPublishInfo.TotalSize),
-                    (stat.Minimum - fullStat.Minimum),
-                    methods.Count - fullMethods.Count,
+                    (stat.StartTimeUsecs.Minimum - fullStat.StartTimeUsecs.Minimum),
+                    stat.JittedMethods.Count - fullStat.JittedMethods.Count,
                     info.SingleAssemblies.FirstOrDefault() ?? "(none)");
             }
         }
@@ -439,17 +429,17 @@ namespace ContPerf
         {
             BuildAndRun(1, 1,
                 compositeFileList, compositeFileIndex,
-                out Statistics stat, out List<string> jitMethods, out PublishInfo publishInfo);
+                out ExecutionInfo stat, out PublishInfo publishInfo);
 
-            s_buildLogFile!.WriteLine("Startup time AVG:    {0}", stat.Average);
-            s_buildLogFile!.WriteLine("Startup time MIN:    {0}", stat.Minimum);
-            s_buildLogFile!.WriteLine("Startup time MAX:    {0}", stat.Maximum);
-            s_buildLogFile!.WriteLine("Startup time STDDEV: {0}", stat.StandardDeviation);
-            s_buildLogFile!.WriteLine("Runtime JIT count:   {0}", jitMethods.Count);
-            s_buildLogFile!.WriteLine("Precise JIT count:   {0}", jitMethods.Count(m => m != ""));
+            s_buildLogFile!.WriteLine("Startup time AVG:    {0}", stat.StartTimeUsecs.Average);
+            s_buildLogFile!.WriteLine("Startup time MIN:    {0}", stat.StartTimeUsecs.Minimum);
+            s_buildLogFile!.WriteLine("Startup time MAX:    {0}", stat.StartTimeUsecs.Maximum);
+            s_buildLogFile!.WriteLine("Startup time STDDEV: {0}", stat.StartTimeUsecs.StandardDeviation);
+            s_buildLogFile!.WriteLine("Runtime JIT count:   {0}", stat.JittedMethods.Count);
+            s_buildLogFile!.WriteLine("Precise JIT count:   {0}", stat.JittedMethods.Count(m => m != ""));
 
             Dictionary<string, int> methodCounts = new Dictionary<string, int>();
-            foreach (string method in jitMethods.Where(m => m != ""))
+            foreach (string method in stat.JittedMethods.Where(m => m != ""))
             {
                 methodCounts.TryGetValue(method, out int count);
                 methodCounts[method] = count + 1;
@@ -501,8 +491,7 @@ namespace ContPerf
 
         private static void BisectPartialComposite(
             int totalFiles, string compositeFileList,
-            Statistics[] statistics,
-            int[] jitMethodCount,
+            ExecutionInfo[] statistics,
             PublishInfo[] publishInfo,
             bool[] calculated,
             int low,
@@ -515,13 +504,13 @@ namespace ContPerf
                 return;
             }
 
-            Statistics lowStat = statistics[low];
-            Statistics highStat = statistics[high];
+            ExecutionInfo lowStat = statistics[low];
+            ExecutionInfo highStat = statistics[high];
             PublishInfo lowPublish = publishInfo[low];
             PublishInfo highPublish = publishInfo[high];
 
             bool bisect = false;
-            if (Math.Abs(highStat.Average - lowStat.Average) >= 10000)
+            if (Math.Abs(highStat.StartTimeUsecs.Average - lowStat.StartTimeUsecs.Average) >= 10000)
             {
                 bisect = true;
             }
@@ -537,20 +526,13 @@ namespace ContPerf
             if (bisect)
             {
                 int middle = (high + low) >> 1;
-                BuildAndRun(middle, totalFiles,
-                    compositeFileList, middle,
-                    out Statistics middleStat, out List<string> middleMethods, out PublishInfo middlePublishInfo);
-                statistics[middle] = middleStat;
-                jitMethodCount[middle] = middleMethods.Count;
+                BuildAndRun(middle, totalFiles, compositeFileList, middle, out ExecutionInfo middleExecInfo, out PublishInfo middlePublishInfo);
+                statistics[middle] = middleExecInfo;
                 publishInfo[middle] = middlePublishInfo;
                 calculated[middle] = true;
 
-                BisectPartialComposite(totalFiles, compositeFileList,
-                    statistics, jitMethodCount, publishInfo, calculated,
-                    low, middle);
-                BisectPartialComposite(totalFiles, compositeFileList,
-                    statistics, jitMethodCount, publishInfo, calculated,
-                    middle, high);
+                BisectPartialComposite(totalFiles, compositeFileList, statistics, publishInfo, calculated, low, middle);
+                BisectPartialComposite(totalFiles, compositeFileList, statistics, publishInfo, calculated, middle, high);
             }
             else
             {
@@ -564,14 +546,13 @@ namespace ContPerf
         }
 
         private static void BuildAndRun(int index, int count,
-            string compositeFileList, int compositeFileCount, out Statistics stat, out List<string> jitMethods,
+            string compositeFileList, int compositeFileCount, out ExecutionInfo stat,
             out PublishInfo publishInfo)
         {
             if (s_csvCache.TryGetValue(compositeFileCount, out CsvInfo? csvInfo))
             {
                 publishInfo = csvInfo.Publish;
                 stat = csvInfo.Stat;
-                jitMethods = new List<string>();
                 return;
             }
 
@@ -579,11 +560,10 @@ namespace ContPerf
                 compositeFileList, compositeFileCount, out publishInfo);
             if (image == null || (s_iterations == 0 && !s_useCrank))
             {
-                stat = new Statistics();
-                jitMethods = new List<string>();
+                stat = new ExecutionInfo();
                 return;
             }
-            Run(image, useTieredCompilation: s_useTieredCompilation, useReadyToRun: s_useReadyToRun, out stat, out jitMethods);
+            Run(image, useTieredCompilation: s_useTieredCompilation, useReadyToRun: s_useReadyToRun, out stat);
         }
 
         /*
@@ -770,11 +750,9 @@ namespace ContPerf
             return RunProcess(psi, logFile, out stdout);
         }
 
-        private static void Run(string dockerImageId, bool useTieredCompilation, bool useReadyToRun,
-            out Statistics stat, out List<string> jitMethods)
+        private static void Run(string dockerImageId, bool useTieredCompilation, bool useReadyToRun, out ExecutionInfo stat)
         {
-            jitMethods = new List<string>();
-            stat = new Statistics();
+            stat = new ExecutionInfo();
 
             if (s_useCrank)
             {
@@ -843,24 +821,12 @@ namespace ContPerf
                     throw new Exception($"Error running crank: {exitCode}");
                 }
 
-                int startTime = 0;
                 foreach (string line in stdout)
                 {
-                    const string StartTimeTag = "| Start Time (ms)     | ";
-                    if (line.StartsWith(StartTimeTag))
-                    {
-                        int numberStart = StartTimeTag.Length;
-                        int numberEnd = numberStart;
-                        while (numberEnd < line.Length && char.IsDigit(line[numberEnd]))
-                        {
-                            numberEnd++;
-                        }
-                        if (numberEnd > numberStart)
-                        {
-                            startTime = int.Parse(line.AsSpan(numberStart, numberEnd - numberStart));                        }
-                    }
+                    ExtractMetric(line, "| Start Time (ms)     | ", ref stat.StartTimeUsecs, 1000);
+                    ExtractMetric(line, "| Working Set (MB)    | ", ref stat.WorkingSetMB);
+                    ExtractMetric(line, "| Private Memory (MB) | ", ref stat.PrivateMemoryMB);
                 }
-                stat.Add(startTime);
             }
             else
             {
@@ -902,12 +868,12 @@ namespace ContPerf
                                 methodEnd++;
                             }
 
-                            while (jitMethods.Count <= methodIndex)
+                            while (stat.JittedMethods.Count <= methodIndex)
                             {
-                                jitMethods.Add("");
+                                stat.JittedMethods.Add("");
                             }
 
-                            jitMethods[methodIndex] = line.Substring(methodPos, methodEnd - methodPos);
+                            stat.JittedMethods[methodIndex] = line.Substring(methodPos, methodEnd - methodPos);
                         }
                     }
                 }
@@ -952,15 +918,40 @@ namespace ContPerf
                         }
                     }
                 }
-                stat = new Statistics(usecDurations);
+                stat.StartTimeUsecs.Add(usecDurations);
             }
 
-            s_execLogFile!.WriteLine("JITTED:  {0}", jitMethods.Count);
-            s_execLogFile!.WriteLine("COUNT:   {0}", stat.Count);
-            s_execLogFile!.WriteLine("AVERAGE: {0}", stat.Average);
-            s_execLogFile!.WriteLine("MINIMUM: {0}", stat.Minimum);
-            s_execLogFile!.WriteLine("MAXIMUM: {0}", stat.Maximum);
-            s_execLogFile!.WriteLine("STDDEV:  {0}", stat.StandardDeviation);
+            s_execLogFile!.WriteLine("JITTED METHOD COUNT:          {0}", stat.JittedMethods.Count);
+            s_execLogFile!.WriteLine("ITERATION COUNT:              {0}", stat.StartTimeUsecs.Count);
+            s_execLogFile!.WriteLine("STARTUP TIME AVERAGE (USECS): {0}", stat.StartTimeUsecs.Average);
+            s_execLogFile!.WriteLine("STARTUP TIME MINIMUM (USECS): {0}", stat.StartTimeUsecs.Minimum);
+            s_execLogFile!.WriteLine("STARTUP TIME MAXIMUM (USECS): {0}", stat.StartTimeUsecs.Maximum);
+            s_execLogFile!.WriteLine("STARTUP TIME STDDEV (USECS):  {0}", stat.StartTimeUsecs.StandardDeviation);
+            s_execLogFile!.WriteLine("WORKING SET (MB):             {0}", stat.WorkingSetMB.Average);
+            s_execLogFile!.WriteLine("PRIVATE MEMORY (MB):          {0}", stat.PrivateMemoryMB.Average);
+        }
+
+        private static bool ExtractMetric(string line, string tag, ref Statistics stat, int scale = 1)
+        {
+            if (!line.StartsWith(tag))
+            {
+                return false;
+            }
+            int numberStart = tag.Length;
+            int numberEnd = numberStart;
+            while (numberEnd < line.Length && char.IsDigit(line[numberEnd]))
+            {
+                numberEnd++;
+            }
+
+            if (numberEnd > numberStart)
+            {
+                int metric = int.Parse(line.AsSpan(numberStart, numberEnd - numberStart));
+                stat.Add(metric * scale);
+                return true;
+            }
+
+            return false;
         }
 
         private static string LocateExecutable()
