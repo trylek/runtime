@@ -217,6 +217,7 @@ namespace ContPerf
         private readonly string _compositeFileList;
         private readonly int _compositeFileCount;
         private readonly TextWriter _buildLogWriter;
+        private readonly string _mibcFile;
 
         private readonly Dictionary<string, int> _compositeAssemblies;
         private readonly List<string> _compositeFiles;
@@ -235,19 +236,21 @@ namespace ContPerf
             string appDir,
             string compositeFileList,
             int compositeFileCount,
-            TextWriter buildLogWriter)
+            TextWriter buildLogWriter,
+            string mibcFile)
         {
             _crossgen2Path = crossgen2Path;
             _useLinux = useLinux;
             _useContainers = useContainers;
             _buildFullComposite = buildFullComposite;
             _emitMapFile = emitMapFile;
-            _useCrossModuleInlining= useCrossModuleInlining;
+            _useCrossModuleInlining = useCrossModuleInlining;
             _publishDir = publishDir;
             _appDir = appDir;
             _compositeFileList = compositeFileList;
             _compositeFileCount = compositeFileCount;
             _buildLogWriter = buildLogWriter;
+            _mibcFile = mibcFile;
 
             _compositeAssemblies = new Dictionary<string, int>();
             _compositeFiles = new List<string>();
@@ -440,6 +443,13 @@ namespace ContPerf
             responseFileContent.AppendLine("--targetos:" + (_useLinux ? "linux" : "windows"));
             responseFileContent.AppendLine("-o:" + output);
             responseFileContent.AppendLine("-O");
+
+            if (_mibcFile != "")
+            {
+                responseFileContent.AppendLine("--mibc:" + _mibcFile);
+                responseFileContent.AppendLine("--partial");
+            }
+
             if (_useCrossModuleInlining)
             {
                 responseFileContent.AppendLine("--opt-cross-module:*");

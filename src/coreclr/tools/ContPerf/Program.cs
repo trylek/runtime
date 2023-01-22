@@ -55,6 +55,7 @@ namespace ContPerf
             CrankApp,
             AppName,
             CsvOutputFile,
+            MibcFile,
         }
 
         private static string? s_compositeFileList;
@@ -78,6 +79,7 @@ namespace ContPerf
         private static string s_crankApp = "";
         private static string s_appName = "";
         private static string s_csvOutputFile = "";
+        private static string s_mibcFile = "";
 
         private static string? s_timestamp;
 
@@ -139,6 +141,11 @@ namespace ContPerf
 
                     case NextArg.CsvOutputFile:
                         s_csvOutputFile = arg;
+                        nextArg = NextArg.Command;
+                        break;
+
+                    case NextArg.MibcFile:
+                        s_mibcFile = arg;
                         nextArg = NextArg.Command;
                         break;
 
@@ -217,6 +224,10 @@ namespace ContPerf
 
                             case "APP":
                                 nextArg = NextArg.AppName;
+                                break;
+
+                            case "MIBC":
+                                nextArg = NextArg.MibcFile;
                                 break;
 
                             default:
@@ -666,7 +677,8 @@ namespace ContPerf
                 s_appFolderName,
                 compositeFileList,
                 compositeFileCount,
-                s_buildLogFile)
+                s_buildLogFile,
+                s_mibcFile)
                 .Build(out publishInfo);
 
             s_buildLogFile!.WriteLine("Composite file list: {0}", compositeFileList);
@@ -770,8 +782,6 @@ namespace ContPerf
                 {
                     crankArgs.AppendFormat(" --application.environmentVariables DOTNET_JitDisasmSummary=1");
                     crankArgs.AppendFormat(" --load.environmentVariables DOTNET_JitDisasmSummary=1");
-                    crankArgs.AppendFormat(" --variable warmup=0");
-                    crankArgs.AppendFormat(" --variable duration=0");
                     executionCount = s_iterations;
                 }
                 else
