@@ -40,6 +40,7 @@ namespace ContPerf
         private static bool s_useFastMode;
         private static bool s_buildFullComposite;
         private static bool s_emitMapFile;
+        private static bool s_useHotColdSplitting;
         private static int? s_partialIndex;
         private static int s_iterations = DefaultIterations;
 
@@ -228,6 +229,10 @@ namespace ContPerf
 
                             case "MIBC":
                                 nextArg = NextArg.MibcFile;
+                                break;
+
+                            case "HOTCOLDSPLITTING":
+                                s_useHotColdSplitting = true;
                                 break;
 
                             default:
@@ -673,6 +678,7 @@ namespace ContPerf
                 buildFullComposite: s_buildFullComposite,
                 emitMapFile: s_emitMapFile,
                 useCrossModuleInlining: s_useCrossModuleInlining,
+                useHotColdSplitting: s_useHotColdSplitting,
                 s_publishFolderName,
                 s_appFolderName,
                 compositeFileList,

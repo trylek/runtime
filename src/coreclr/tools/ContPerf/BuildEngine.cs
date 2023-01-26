@@ -212,6 +212,7 @@ namespace ContPerf
         private readonly bool _buildFullComposite;
         private readonly bool _emitMapFile;
         private readonly bool _useCrossModuleInlining;
+        private readonly bool _useHotColdSplitting;
         private readonly string _publishDir;
         private readonly string _appDir;
         private readonly string _compositeFileList;
@@ -232,6 +233,7 @@ namespace ContPerf
             bool buildFullComposite,
             bool emitMapFile,
             bool useCrossModuleInlining,
+            bool useHotColdSplitting,
             string publishDir,
             string appDir,
             string compositeFileList,
@@ -245,6 +247,7 @@ namespace ContPerf
             _buildFullComposite = buildFullComposite;
             _emitMapFile = emitMapFile;
             _useCrossModuleInlining = useCrossModuleInlining;
+            _useHotColdSplitting= useHotColdSplitting;
             _publishDir = publishDir;
             _appDir = appDir;
             _compositeFileList = compositeFileList;
@@ -263,7 +266,7 @@ namespace ContPerf
             LoadCompositeAssemblies();
             SelectAssembliesForCompilation();
 
-            if (_useCrossModuleInlining)
+            if (_useCrossModuleInlining || _useHotColdSplitting)
             {
                 Parallel.ForEach(_singleFiles, (dll) =>
                     {
@@ -454,6 +457,11 @@ namespace ContPerf
             {
                 responseFileContent.AppendLine("--opt-cross-module:*");
                 responseFileContent.AppendLine("--opt-async-methods");
+            }
+            if (_useHotColdSplitting)
+            {
+                responseFileContent.AppendLine("--hot-cold-splitting");
+                responseFileContent.AppendLine("--method-layout:hotwarmcold");
             }
             if (_emitMapFile)
             {
