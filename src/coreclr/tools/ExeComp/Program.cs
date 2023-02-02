@@ -3,33 +3,36 @@
 
 using System.Xml;
 
-class Program
+namespace ExeComp
 {
-    public static int Main(string[] args)
+    public sealed class Program
     {
-        try
+        public static int Main(string[] args)
         {
-            new Program().TryMain(args);
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine("Error: {0}", ex.Message);
-            return 1;
-        }
-    }
-
-    private void TryMain(string[] args)
-    {
-        List<ExecutionTrace> traces = new List<ExecutionTrace>();
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            string arg = args[i];
-            traces.Add(ExecutionTrace.LoadFile(arg));
+            try
+            {
+                TryMain(args);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("Error: {0}", ex.Message);
+                return 1;
+            }
         }
 
-        Statistics statistics = new Statistics(traces, Console.Out);
-        statistics.DumpModuleInstructionMap();
+        private static void TryMain(string[] args)
+        {
+            List<ExecutionTrace> traces = new List<ExecutionTrace>();
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                traces.Add(ExecutionTrace.LoadFile(arg));
+            }
+
+            Statistics statistics = new Statistics(traces, Console.Out);
+            statistics.DumpModuleInstructionMap();
+        }
     }
 }
