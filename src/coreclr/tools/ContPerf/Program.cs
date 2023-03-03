@@ -84,9 +84,9 @@ namespace ContPerf
 
         private static string? s_timestamp;
 
-        private static TextWriter? s_buildLogFile;
-        private static TextWriter? s_execLogFile;
-        private static TextWriter? s_resultsCsvFile;
+        private static StreamWriter? s_buildLogFile;
+        private static StreamWriter? s_execLogFile;
+        private static StreamWriter? s_resultsCsvFile;
 
         private static Dictionary<int, CsvInfo> s_csvCache = new Dictionary<int, CsvInfo>();
 
@@ -783,27 +783,18 @@ namespace ContPerf
                 crankArgs.AppendFormat(" --application.source.localFolder " + s_appFolderName);
                 crankArgs.AppendFormat(" --application.executable " + LocateExecutable());
                 crankArgs.AppendFormat(" --scenario {0}", s_crankScenario);
-                int executionCount;
+                int executionCount = Math.Max(s_iterations, 1);
                 if (s_logJitSummary)
                 {
                     crankArgs.AppendFormat(" --application.environmentVariables DOTNET_JitDisasmSummary=1");
                     crankArgs.AppendFormat(" --load.environmentVariables DOTNET_JitDisasmSummary=1");
-                    executionCount = s_iterations;
                 }
-                else
+                else if (s_iterations == 0)
                 {
-                    executionCount = 1;
-                    if (s_iterations != 0)
-                    {
-                        crankArgs.AppendFormat(" --iterations {0}", s_iterations);
-                    }
-                    else
-                    {
-                        crankArgs.AppendFormat(" --iterations 1"); ;
-                        crankArgs.AppendFormat(" --variable warmup=0");
-                        crankArgs.AppendFormat(" --variable duration=0");
-                    }
+                    crankArgs.AppendFormat(" --variable warmup=0");
+                    crankArgs.AppendFormat(" --variable duration=0");
                 }
+                crankArgs.AppendFormat(" --iterations 1"); ;
                 crankArgs.AppendFormat(" --profile aspnet-perf-{0}", s_useLinux ? "lin" : "win");
                 crankArgs.AppendFormat(" --profile short");
 
@@ -816,7 +807,7 @@ namespace ContPerf
                 int successCount = 0;
                 int failureCount = 0;
                 int exitCode = 0;
-                List<string> stdout = new List<string>();
+                List<string> stdout;
                 while (failureCount < CrankRetryAttempts && successCount < executionCount)
                 {
                     Console.WriteLine("Running crank: {0} {1}", psi.FileName, psi.Arguments);
@@ -824,6 +815,9 @@ namespace ContPerf
                     if (exitCode == 0)
                     {
                         successCount++;
+                        ExtractMetric(stdout, "| Start Time (ms)     | ", ref stat.StartTimeUsecs, 1000);
+                        ExtractMetric(stdout, "| Working Set (MB)    | ", ref stat.WorkingSetMB);
+                        ExtractMetric(stdout, "| Private Memory (MB) | ", ref stat.PrivateMemoryMB);
                     }
                     else
                     {
@@ -835,13 +829,6 @@ namespace ContPerf
                 if (exitCode != 0)
                 {
                     throw new Exception($"Error running crank: {exitCode}");
-                }
-
-                foreach (string line in stdout)
-                {
-                    ExtractMetric(line, "| Start Time (ms)     | ", ref stat.StartTimeUsecs, 1000);
-                    ExtractMetric(line, "| Working Set (MB)    | ", ref stat.WorkingSetMB);
-                    ExtractMetric(line, "| Private Memory (MB) | ", ref stat.PrivateMemoryMB);
                 }
             }
             else
@@ -937,14 +924,19 @@ namespace ContPerf
                 stat.StartTimeUsecs.Add(usecDurations);
             }
 
-            s_execLogFile!.WriteLine("JITTED METHOD COUNT:          {0}", stat.JittedMethods.Count);
-            s_execLogFile!.WriteLine("ITERATION COUNT:              {0}", stat.StartTimeUsecs.Count);
-            s_execLogFile!.WriteLine("STARTUP TIME AVERAGE (USECS): {0}", stat.StartTimeUsecs.Average);
-            s_execLogFile!.WriteLine("STARTUP TIME MINIMUM (USECS): {0}", stat.StartTimeUsecs.Minimum);
-            s_execLogFile!.WriteLine("STARTUP TIME MAXIMUM (USECS): {0}", stat.StartTimeUsecs.Maximum);
-            s_execLogFile!.WriteLine("STARTUP TIME STDDEV (USECS):  {0}", stat.StartTimeUsecs.StandardDeviation);
-            s_execLogFile!.WriteLine("WORKING SET (MB):             {0}", stat.WorkingSetMB.Average);
-            s_execLogFile!.WriteLine("PRIVATE MEMORY (MB):          {0}", stat.PrivateMemoryMB.Average);
+            s_execLogFile!.WriteLine("JITTED METHOD COUNT:  {0}", stat.JittedMethods.Count);
+            s_execLogFile!.WriteLine("ITERATION COUNT:      {0}", stat.StartTimeUsecs.Count);
+            s_execLogFile!.WriteLine("STARTUP TIME (USECS): {0}", stat.StartTimeUsecs);
+            s_execLogFile!.WriteLine("WORKING SET (MB):     {0}", stat.WorkingSetMB);
+            s_execLogFile!.WriteLine("PRIVATE MEMORY (MB):  {0}", stat.PrivateMemoryMB);
+        }
+
+        private static void ExtractMetric(IEnumerable<string> stdout, string tag, ref Statistics stat, int scale = 1)
+        {
+            foreach (string line in stdout)
+            {
+                ExtractMetric(line, tag, ref stat, scale);
+            }
         }
 
         private static bool ExtractMetric(string line, string tag, ref Statistics stat, int scale = 1)

@@ -85,6 +85,11 @@ namespace ContPerf
                 Add(value);
             }
         }
+
+        public override string ToString()
+        {
+            return $"{Average} (MIN = {Minimum}, MAX = {Maximum}, STDDEV = {StandardDeviation})";
+        }
     }
 
     public sealed class CsvInfo
@@ -278,7 +283,7 @@ namespace ContPerf
                     }
                 );
             }
-            else if (_compositeFiles.Count > 0 || _buildFullComposite)
+            if (!_useCrossModuleInlining && (_compositeFiles.Count > 0 || _buildFullComposite))
             {
                 CompileCompositeImage();
             }
