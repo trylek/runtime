@@ -224,6 +224,7 @@ namespace ContPerf
         private readonly int _compositeFileCount;
         private readonly TextWriter _buildLogWriter;
         private readonly string _mibcFile;
+        private readonly HashSet<string> _assemblySkipList;
 
         private readonly Dictionary<string, int> _compositeAssemblies;
         private readonly List<string> _compositeFiles;
@@ -243,6 +244,7 @@ namespace ContPerf
             string appDir,
             string compositeFileList,
             int compositeFileCount,
+            HashSet<string> assemblySkipList,
             TextWriter buildLogWriter,
             string mibcFile)
         {
@@ -259,6 +261,7 @@ namespace ContPerf
             _compositeFileCount = compositeFileCount;
             _buildLogWriter = buildLogWriter;
             _mibcFile = mibcFile;
+            _assemblySkipList = assemblySkipList;
 
             _compositeAssemblies = new Dictionary<string, int>();
             _compositeFiles = new List<string>();
@@ -306,6 +309,8 @@ namespace ContPerf
             HashSet<string> appFolders = new HashSet<string>();
             HashSet<string> publishFiles = new HashSet<string>();
             HashSet<string> appFiles = new HashSet<string>();
+
+            Directory.CreateDirectory(_appDir);
 
             foreach (string folder in Directory.EnumerateDirectories(_publishDir, "*.*", SearchOption.AllDirectories))
             {
@@ -394,6 +399,10 @@ namespace ContPerf
                 {
                     totalFiles++;
                     string simpleName = Path.GetFileNameWithoutExtension(dll);
+                    if (_assemblySkipList.Contains(simpleName))
+                    {
+                        continue;
+                    }
                     long size;
                     if (_compositeAssemblies != null && _compositeAssemblies.TryGetValue(simpleName, out int line))
                     {
@@ -455,7 +464,7 @@ namespace ContPerf
             if (_mibcFile != "")
             {
                 responseFileContent.AppendLine("--mibc:" + _mibcFile);
-                responseFileContent.AppendLine("--partial");
+                // responseFileContent.AppendLine("--partial");
             }
 
             if (_useCrossModuleInlining)

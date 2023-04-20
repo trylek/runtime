@@ -43,6 +43,7 @@ namespace ContPerf
         private static bool s_useHotColdSplitting;
         private static int? s_partialIndex;
         private static int s_iterations = DefaultIterations;
+        private static HashSet<string> s_assemblySkipList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         private enum NextArg
         {
@@ -57,6 +58,7 @@ namespace ContPerf
             AppName,
             CsvOutputFile,
             MibcFile,
+            SkipAssemblyName,
         }
 
         private static string? s_compositeFileList;
@@ -150,6 +152,11 @@ namespace ContPerf
                         nextArg = NextArg.Command;
                         break;
 
+                    case NextArg.SkipAssemblyName:
+                        s_assemblySkipList.Add(arg);
+                        nextArg = NextArg.Command;
+                        break;
+
                     case NextArg.Command:
                         switch (arg)
                         {
@@ -233,6 +240,10 @@ namespace ContPerf
 
                             case "HOTCOLDSPLITTING":
                                 s_useHotColdSplitting = true;
+                                break;
+
+                            case "SKIP":
+                                nextArg = NextArg.SkipAssemblyName;
                                 break;
 
                             default:
@@ -683,6 +694,7 @@ namespace ContPerf
                 s_appFolderName,
                 compositeFileList,
                 compositeFileCount,
+                s_assemblySkipList,
                 s_buildLogFile,
                 s_mibcFile)
                 .Build(out publishInfo);
@@ -750,7 +762,7 @@ namespace ContPerf
             }
             else
             {
-                application = Path.Combine(s_publishFolderName, runScriptName);
+                application = Path.Combine(s_appFolderName, runScriptName);
             }
             ProcessStartInfo psi = new ProcessStartInfo()
             {
