@@ -282,7 +282,8 @@ namespace Internal.JitInterface
 
                             foreach (DefType interfaceType in methodTargetOwner.RuntimeInterfaces)
                             {
-                                if (interfaceType == instantiatedOwningType || interfaceType == canonicalizedOwningType)
+                                if (interfaceType == instantiatedOwningType ||
+                                    interfaceType.ConvertToCanonForm(CanonicalFormKind.Specific) == canonicalizedOwningType)
                                 {
                                     return methodTargetOwner;
                                 }
@@ -1302,13 +1303,11 @@ namespace Internal.JitInterface
 
         private ModuleToken HandleToModuleToken(ref CORINFO_RESOLVED_TOKEN pResolvedToken, MethodDesc methodDesc, out object context, ref TypeDesc constrainedType)
         {
-            if (methodDesc != null && !methodDesc.IsAbstract &&
-                (_compilation.NodeFactory.CompilationModuleGroup.VersionsWithMethodBody(methodDesc) 
-                || (pResolvedToken.tokenType == CorInfoTokenKind.CORINFO_TOKENKIND_DevirtualizedMethod) 
+            if (methodDesc != null && (_compilation.NodeFactory.CompilationModuleGroup.VersionsWithMethodBody(methodDesc)
+                || (pResolvedToken.tokenType == CorInfoTokenKind.CORINFO_TOKENKIND_DevirtualizedMethod)
                 || methodDesc.IsPInvoke))
             {
-                CorTokenType corTokenType = (CorTokenType)(unchecked((uint)pResolvedToken.token) & 0xFF000000u);
-                if ((corTokenType == CorTokenType.mdtMethodDef || corTokenType == CorTokenType.mdtMemberRef) &&
+                if ((CorTokenType)(unchecked((uint)pResolvedToken.token) & 0xFF000000u) == CorTokenType.mdtMethodDef &&
                     methodDesc?.GetTypicalMethodDefinition() is EcmaMethod ecmaMethod)
                 {
                     mdToken token = (mdToken)MetadataTokens.GetToken(ecmaMethod.Handle);
@@ -1882,9 +1881,9 @@ namespace Internal.JitInterface
                 if (isStaticVirtual)
                 {
                     directMethod = constrainedType.ResolveVariantInterfaceMethodToStaticVirtualMethodOnType(originalMethod);
-                    if (directMethod == null)
+                    if (directMethod != null && !_compilation.NodeFactory.CompilationModuleGroup.VersionsWithMethodBody(directMethod))
                     {
-                        throw new RequiresRuntimeJitException(originalMethod.ToString());
+                        directMethod = null;
                     }
                 }
                 else
@@ -1912,6 +1911,7 @@ namespace Internal.JitInterface
                     pResult->thisTransform = CORINFO_THIS_TRANSFORM.CORINFO_NO_THIS_TRANSFORM;
 
                     exactType = constrainedType;
+                    constrainedType = null;
                 }
                 else if (isStaticVirtual)
                 {
