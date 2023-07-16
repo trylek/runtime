@@ -1907,9 +1907,6 @@ namespace Internal.JitInterface
                     {
                         directMethod = null;
                     }
-                    if (directMethod != null)
-                    {
-                    }
                 }
                 else
                 {
@@ -1957,16 +1954,17 @@ namespace Internal.JitInterface
             //
 
             targetMethod = methodAfterConstraintResolution;
+            bool constrainedTypeNeedsRuntimeLookup = (constrainedType != null && constrainedType.IsCanonicalSubtype(CanonicalFormKind.Any));
 
             if (targetMethod.HasInstantiation)
             {
                 pResult->contextHandle = contextFromMethod(targetMethod);
-                pResult->exactContextNeedsRuntimeLookup = targetMethod.IsSharedByGenericInstantiations;
+                pResult->exactContextNeedsRuntimeLookup = constrainedTypeNeedsRuntimeLookup || targetMethod.IsSharedByGenericInstantiations;
             }
             else
             {
                 pResult->contextHandle = contextFromType(exactType);
-                pResult->exactContextNeedsRuntimeLookup = exactType.IsCanonicalSubtype(CanonicalFormKind.Any);
+                pResult->exactContextNeedsRuntimeLookup = constrainedTypeNeedsRuntimeLookup || exactType.IsCanonicalSubtype(CanonicalFormKind.Any);
 
                 // Use main method as the context as long as the methods are called on the same type
                 if (pResult->exactContextNeedsRuntimeLookup &&
@@ -1991,14 +1989,14 @@ namespace Internal.JitInterface
             bool resolvedCallVirt = false;
             bool callVirtCrossingVersionBubble = false;
 
-            if (isLdftn)
+            if (isStaticVirtual && !resolvedConstraint)
+            {
+                // Don't use direct calls for static virtual method calls unresolved at compile time
+            }
+            else if (isLdftn)
             {
                 PrepareForUseAsAFunctionPointer(targetMethod);
                 directCall = true;
-            }
-            else if (isStaticVirtual && !resolvedConstraint)
-            {
-                // Don't use direct calls for static virtual method calls unresolved at compile time
             }
             else if (targetMethod.Signature.IsStatic)
             {
@@ -2188,7 +2186,16 @@ namespace Internal.JitInterface
                 // (supplying the instantiation argument).
                 if (!resolvedConstraint)
                 {
-                    useInstantiatingStub = true;
+                    if (pResult->exactContextNeedsRuntimeLookup)
+                    {
+                        throw new RequiresRuntimeJitException("EmbedGenericHandle currently doesn't support propagation of RUNTIME_LOOKUP or pConstrainedResolvedToken from ComputeRuntimeLookupForSharedGenericToken");
+                        // ComputeRuntimeLookupForSharedGenericToken(DictionaryEntryKind.DispatchStubAddrSlot, ref pResolvedToken, pConstrainedResolvedToken, originalMethod, ref pResult->codePointerOrStubLookup);
+                        // useInstantiatingStub = false;
+                    }
+                    else
+                    {
+                        useInstantiatingStub = true;
+                    }
                 }
             }
             // All virtual calls which take method instantiations must
