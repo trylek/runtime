@@ -380,10 +380,7 @@ namespace ContPerf
                 int lineIndex = 0;
                 foreach (string line in File.ReadAllLines(_compositeFileList))
                 {
-                    if (!_compositeAssemblies.ContainsKey(line))
-                    {
-                        _compositeAssemblies.Add(line, lineIndex);
-                    }
+                    _compositeAssemblies.TryAdd(line, lineIndex);
                     lineIndex++;
                 }
             }
