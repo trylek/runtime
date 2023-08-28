@@ -220,6 +220,7 @@ namespace ContPerf
         private readonly bool _useHotColdSplitting;
         private readonly string _publishDir;
         private readonly string _appDir;
+        private readonly string _appCrankDir;
         private readonly string _compositeFileList;
         private readonly int _compositeFileCount;
         private readonly TextWriter _buildLogWriter;
@@ -257,6 +258,7 @@ namespace ContPerf
             _useHotColdSplitting= useHotColdSplitting;
             _publishDir = publishDir;
             _appDir = appDir;
+            _appCrankDir = Path.Combine(_appDir, "published");
             _compositeFileList = compositeFileList;
             _compositeFileCount = compositeFileCount;
             _buildLogWriter = buildLogWriter;
@@ -280,7 +282,7 @@ namespace ContPerf
                     {
                         RunCrossgen2(
                             composite: false,
-                            output: Path.Combine(_appDir, Path.GetFileName(dll)),
+                            output: Path.Combine(_appCrankDir, Path.GetFileName(dll)),
                             inputs: new string[] { dll },
                             unrootedInputs: Array.Empty<string>());
                     }
@@ -297,8 +299,8 @@ namespace ContPerf
             publishInfo.SingleAssemblies = _singleFiles;
             publishInfo.CompositeAssemblies = _compositeFiles;
             publishInfo.TotalFiles = _singleFiles.Count + _compositeFiles.Count;
-            publishInfo.SingleSize = _singleFiles.Sum(f => new FileInfo(Path.Combine(_appDir, Path.GetFileName(f))).Length);
-            publishInfo.CompositeSize = _compositeFiles.Sum(f => new FileInfo(Path.Combine(_appDir, Path.GetFileName(f))).Length)
+            publishInfo.SingleSize = _singleFiles.Sum(f => new FileInfo(Path.Combine(_appCrankDir, Path.GetFileName(f))).Length);
+            publishInfo.CompositeSize = _compositeFiles.Sum(f => new FileInfo(Path.Combine(_appCrankDir, Path.GetFileName(f))).Length)
                 + (_compositeFileName != null ? new FileInfo(_compositeFileName).Length : 0);
             publishInfo.TotalSize = publishInfo.SingleSize + publishInfo.CompositeSize;
         }
@@ -310,16 +312,16 @@ namespace ContPerf
             HashSet<string> publishFiles = new HashSet<string>();
             HashSet<string> appFiles = new HashSet<string>();
 
-            Directory.CreateDirectory(_appDir);
+            Directory.CreateDirectory(_appCrankDir);
 
             foreach (string folder in Directory.EnumerateDirectories(_publishDir, "*.*", SearchOption.AllDirectories))
             {
                 string relativePath = Path.GetRelativePath(_publishDir, folder);
-                if (relativePath.StartsWith("app\\"))
+                if (relativePath.StartsWith("app\\published\\"))
                 {
-                    appFolders.Add(relativePath.Substring(4));
+                    appFolders.Add(relativePath.Substring(14));
                 }
-                else if (!relativePath.StartsWith("logs\\") && relativePath != "app" && relativePath != "logs")
+                else if (!relativePath.StartsWith("logs\\") && relativePath != "app" && relativePath != "logs" && !relativePath.StartsWith("app\\published"))
                 {
                     publishFolders.Add(relativePath);
                 }
@@ -328,11 +330,11 @@ namespace ContPerf
             foreach (string file in Directory.EnumerateFiles(_publishDir, "*.*", SearchOption.AllDirectories))
             {
                 string relativePath = Path.GetRelativePath(_publishDir, file);
-                if (relativePath.StartsWith("app\\"))
+                if (relativePath.StartsWith("app\\published\\"))
                 {
-                    appFiles.Add(relativePath.Substring(4));
+                    appFiles.Add(relativePath.Substring(14));
                 }
-                else if (!relativePath.StartsWith("logs\\"))
+                else if (!relativePath.StartsWith("logs\\") && !relativePath.StartsWith("app\\published"))
                 {
                     publishFiles.Add(relativePath);
                 }
@@ -341,7 +343,7 @@ namespace ContPerf
             // Remove extra files
             foreach (string extraFile in appFiles.Where(af => !publishFiles.Contains(af)))
             {
-                string extraFilePath = Path.Combine(_appDir, extraFile);
+                string extraFilePath = Path.Combine(_appCrankDir, extraFile);
                 Console.WriteLine("Deleting extra file {0}", extraFilePath);
                 File.Delete(extraFilePath);
             }
@@ -349,7 +351,7 @@ namespace ContPerf
             // Remove extra folders
             foreach (string extraFolder in appFolders.Where(af => !publishFolders.Contains(af)))
             {
-                string extraFolderPath = Path.Combine(_appDir, extraFolder);
+                string extraFolderPath = Path.Combine(_appCrankDir, extraFolder);
                 Console.WriteLine("Deleting extra folder {0}", extraFolderPath);
                 Directory.Delete(extraFolderPath);
             }
@@ -357,7 +359,7 @@ namespace ContPerf
             // Create non-existent folders
             foreach (string folder in publishFolders)
             {
-                string folderPath = Path.Combine(_appDir, folder);
+                string folderPath = Path.Combine(_appCrankDir, folder);
                 if (!Directory.Exists(folderPath))
                 {
                     Directory.CreateDirectory(folderPath);
@@ -368,7 +370,7 @@ namespace ContPerf
             foreach (string file in publishFiles)
             {
                 string publishPath = Path.Combine(_publishDir, file);
-                string appPath = Path.Combine(_appDir, file);
+                string appPath = Path.Combine(_appCrankDir, file);
                 File.Copy(publishPath, appPath, overwrite: true);
             }
         }
@@ -435,7 +437,7 @@ namespace ContPerf
         private void CompileCompositeImage()
         {
             string compositeName = "composite." + Path.GetFileNameWithoutExtension(_compositeFiles.Count > 0 ? _compositeFiles[0] : _singleFiles[0]) + ".dll";
-            _compositeFileName = Path.Combine(_appDir, compositeName);
+            _compositeFileName = Path.Combine(_appCrankDir, compositeName);
             Console.WriteLine("Compiling composite image {0}", _compositeFileName);
             RunCrossgen2(
                 composite: true,

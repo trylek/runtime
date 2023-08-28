@@ -34,7 +34,7 @@ namespace ContPerf
         private static bool s_useReadyToRun = true;
         private static bool s_useTieredCompilation;
         private static bool s_useContainers = true;
-        private static bool s_usePartialComposite;
+        // private static bool s_usePartialComposite;
         private static bool s_measureNegativeComposite;
         private static bool s_useCrossModuleInlining;
         private static bool s_useFastMode;
@@ -63,6 +63,7 @@ namespace ContPerf
 
         private static string? s_compositeFileList;
 
+        /*
         private static string[] s_buildModes =
         {
             "default-r2r",
@@ -72,6 +73,7 @@ namespace ContPerf
             "full.composite",
             "cross-module-inlining",
         };
+        */
 
         private static string s_crossgen2Path = "";
         private static string s_publishFolderName = "";
@@ -210,7 +212,7 @@ namespace ContPerf
                                 break;
 
                             case "PARTIAL":
-                                s_usePartialComposite = true;
+                                // s_usePartialComposite = true;
                                 nextArg = NextArg.CompositeFileList;
                                 break;
 
@@ -274,7 +276,7 @@ namespace ContPerf
             string execLogFile = Path.Combine(s_logsFolderName, $"run-{s_timestamp}.log");
             string resultsCsvFile = Path.Combine(s_logsFolderName, $"results-{s_timestamp}.csv");
 
-            ExecutionInfo[] results = new ExecutionInfo[s_buildModes.Length];
+            // ExecutionInfo[] results = new ExecutionInfo[s_buildModes.Length];
 
             using (StreamWriter buildLogWriter = new StreamWriter(buildLogFile))
             using (StreamWriter execLogWriter = new StreamWriter(execLogFile))
@@ -283,10 +285,11 @@ namespace ContPerf
                 s_buildLogFile = buildLogWriter;
                 s_execLogFile = execLogWriter;
                 s_resultsCsvFile = resultsCsvWriter;
-                if (s_usePartialComposite)
+                // if (s_usePartialComposite)
                 {
                     MeasurePartialComposite();
                 }
+                /*
                 else
                 {
                     for (int modeIndex = 0; modeIndex < s_buildModes.Length; modeIndex++)
@@ -311,6 +314,7 @@ namespace ContPerf
                             s_buildModes[modeIndex]);
                     }
                 }
+                */
 
                 s_buildLogFile = null;
                 s_execLogFile = null;
@@ -980,7 +984,7 @@ namespace ContPerf
             if (string.IsNullOrEmpty(executable))
             {
                 List<string> executables = new List<string>();
-                foreach (string exeCandidate in Directory.EnumerateFiles(s_appFolderName, s_useLinux ? "*" : "*.exe"))
+                foreach (string exeCandidate in Directory.EnumerateFiles(Path.Combine(s_appFolderName, "published"), s_useLinux ? "*" : "*.exe"))
                 {
                     string name = Path.GetFileName(exeCandidate);
                     if (Path.GetFileNameWithoutExtension(name) == "createdump")
