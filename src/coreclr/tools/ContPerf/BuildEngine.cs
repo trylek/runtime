@@ -258,7 +258,9 @@ namespace ContPerf
             _useHotColdSplitting= useHotColdSplitting;
             _publishDir = publishDir;
             _appDir = appDir;
-            _appCrankDir = Path.Combine(_appDir, "published");
+            _appCrankDir = _appDir;
+            // Crank error requiring the extra "published" folder level, probably already fixed
+            // Path.Combine(_appDir, "published");
             _compositeFileList = compositeFileList;
             _compositeFileCount = compositeFileCount;
             _buildLogWriter = buildLogWriter;
@@ -317,11 +319,11 @@ namespace ContPerf
             foreach (string folder in Directory.EnumerateDirectories(_publishDir, "*.*", SearchOption.AllDirectories))
             {
                 string relativePath = Path.GetRelativePath(_publishDir, folder);
-                if (relativePath.StartsWith("app\\published\\"))
+                if (relativePath.StartsWith("app\\")) //published\\"))
                 {
-                    appFolders.Add(relativePath.Substring(14));
+                    appFolders.Add(relativePath.Substring(4)); // 14));
                 }
-                else if (!relativePath.StartsWith("logs\\") && relativePath != "app" && relativePath != "logs" && !relativePath.StartsWith("app\\published"))
+                else if (!relativePath.StartsWith("logs\\") && relativePath != "app" && relativePath != "logs" /*&& !relativePath.StartsWith("app\\published")*/)
                 {
                     publishFolders.Add(relativePath);
                 }
@@ -330,11 +332,11 @@ namespace ContPerf
             foreach (string file in Directory.EnumerateFiles(_publishDir, "*.*", SearchOption.AllDirectories))
             {
                 string relativePath = Path.GetRelativePath(_publishDir, file);
-                if (relativePath.StartsWith("app\\published\\"))
+                if (relativePath.StartsWith("app\\")) //published\\"))
                 {
-                    appFiles.Add(relativePath.Substring(14));
+                    appFiles.Add(relativePath.Substring(4)); // 14));
                 }
-                else if (!relativePath.StartsWith("logs\\") && !relativePath.StartsWith("app\\published"))
+                else if (!relativePath.StartsWith("logs\\") /* && !relativePath.StartsWith("app\\published")*/)
                 {
                     publishFiles.Add(relativePath);
                 }

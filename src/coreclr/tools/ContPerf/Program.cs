@@ -984,7 +984,7 @@ namespace ContPerf
             if (string.IsNullOrEmpty(executable))
             {
                 List<string> executables = new List<string>();
-                foreach (string exeCandidate in Directory.EnumerateFiles(Path.Combine(s_appFolderName, "published"), s_useLinux ? "*" : "*.exe"))
+                foreach (string exeCandidate in Directory.EnumerateFiles(s_appFolderName /*Path.Combine(s_appFolderName, "published")*/, s_useLinux ? "*" : "*.exe"))
                 {
                     string name = Path.GetFileName(exeCandidate);
                     if (Path.GetFileNameWithoutExtension(name) == "createdump")
