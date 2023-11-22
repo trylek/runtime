@@ -873,6 +873,9 @@ STDMETHODIMP CorHost2::UnloadAppDomain(DWORD dwDomainId, BOOL fWaitUntilDone)
     return UnloadAppDomain2(dwDomainId, fWaitUntilDone, nullptr);
 }
 
+void DumpTypeLoadTimingInfo();
+void FlushTimingInfo();
+
 STDMETHODIMP CorHost2::UnloadAppDomain2(DWORD dwDomainId, BOOL fWaitUntilDone, int *pLatchedExitCode)
 {
     WRAPPER_NO_CONTRACT;
@@ -909,6 +912,9 @@ STDMETHODIMP CorHost2::UnloadAppDomain2(DWORD dwDomainId, BOOL fWaitUntilDone, i
         if (1 == refCount)
         {
             // Stop coreclr on unload.
+            DumpTypeLoadTimingInfo();
+            FlushTimingInfo();
+
             EEShutDown(FALSE);
         }
         else
